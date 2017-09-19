@@ -95,7 +95,6 @@ app.use('/help', function(req, res) {
 
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
   * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
-  * Tag names can't be omitted when a class or id is specified: `#some-id`
   * Security issue? In javascript sections, the user has access to some local variables of the template engine.
   * The variable name `_` can't be used.
   * fastjade behaves differently than jade when indentation is imperfect:
@@ -104,7 +103,6 @@ app.use('/help', function(req, res) {
        p Hello
       p World    <- In jade, this <p> is not inside the <div>
     ```
-  * Self-closing tags don't end with a slash (`<br>` instead of `<br/>`), which is wrong in XML
 
 ## Not supported yet
 
