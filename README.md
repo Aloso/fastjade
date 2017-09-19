@@ -58,10 +58,10 @@ Executing it results in the following HTML document:
 
 ## Installation
 
-This project is not yet available on npm. However, you can install it by copying the file `fast-jade.js` onto your server and including it in your file:
+This project is not yet available on npm. However, you can install it by copying the file `fastjade.js` onto your server and including it in your file:
 
 ```javascript
-var fastJade = require('./fast-jade.js');
+var fastJade = require('./fastjade.js');
 ```
 
 Then you can use it:
@@ -98,7 +98,7 @@ app.use('/help', function(req, res) {
   * Tag names can't be omitted when a class or id is specified: `#some-id`
   * Security issue? In javascript sections, the user has access to some local variables of the template engine.
   * The variable name `_` can't be used.
-  * *fast-jade* behaves differently than *jade* when indentation is imperfect:
+  * fastjade behaves differently than jade when indentation is imperfect:
     ```jade
     div
        p Hello
