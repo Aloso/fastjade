@@ -56,7 +56,7 @@ Executing it results in the following HTML document:
 </html>
 ```
 
-##Installation
+## Installation
 
 This project is not yet available on npm. However, you can install it by copying the file `fast-jade.js` onto your server and including it in your file:
 
