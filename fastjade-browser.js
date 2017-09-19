@@ -212,8 +212,8 @@ var FastJade = (function() {
         /** @type {int} */
         var firstNWcharPos;
         
-    //               tag          classes/IDs                     (    key                         =   value                                             )
-    var nodeRegex = /[a-z0-9_-]*([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|'[^']*?'|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
+        //               tag          classes/IDs                     (    key                         =   value                                             )
+        var nodeRegex = /[a-z0-9_-]*([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|'[^']*?'|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
         
         for (var i = 0; i < lines.length; i++) {
             line = lines[i];
@@ -570,7 +570,7 @@ var FastJade = (function() {
         try {
             eval(res);
         } catch (e) {
-            throw new Error("Invalid javascript in Jade template");
+            throw new Error("Invalid javascript in Jade template (" + e + ")");
         }
         // noinspection JSUnresolvedVariable
         var func = anonymous;
@@ -594,7 +594,7 @@ var FastJade = (function() {
         try {
             eval(templateFunc);
         } catch (e) {
-            throw new Error("Invalid javascript in Jade template");
+            throw new Error("Invalid javascript in Jade template (" + e + ")");
         }
         // noinspection JSUnresolvedFunction
         return anonymous(context);
