@@ -1,0 +1,26 @@
+//- This is a file where you can see many
+//- language features that are included in fastjade
+//- Default doctype:
+doctype
+//- XML doctype:
+doctype xml
+//- Possible values: html, 5, default, xml, transitional, strict, frameset, 1.1, basic, mobile
+
+html(lang="de")
+  head
+    title Hello World!
+    meta(charset="utf-8")
+      | This is text.
+      | Since it is inside a self-closing node, it is ignored.
+  body
+    p.cls A paragraph
+    p= "A paragraph with javascript " + " content."
+      |  More text
+      = "javascript content can appear here, too."
+      != "This string is <b>not escaped!</b>"
+    //- There are 2 types of comments:
+    //- This comment is completely ignored by the compiler.
+    // This is a HTML comment. It will appear in the output.
+      p This is a node inside the comment. It won't appear on the website.
+        // This is an HTML comment inside an HTML comment.
+        // Inner html comments use square brackets instead of angle brackets.
