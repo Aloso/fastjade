@@ -5,8 +5,8 @@ Here is a simple jade template:
 
 ```jade
 // Create variables
-title = "Hello World!"
-injected = true
+- var title = "Hello World!"
+- var injected = true
 !!! 5
 html
   head
@@ -25,12 +25,12 @@ function anonymous(ctx) {
   with (ctx || {}) {
     var _ = "";
     _ += "<!-- Create variables -->";
-    var title = "Hello World!";
-    var injected = true;
+    var title = "Hello World!"
+    var injected = true
     _ += "<!DOCTYPE html><html><head><title>";
     _ += title;
     _ += "</title><meta charset=\"utf-8\"></head><body><h1>";
-    _ += escapeHtml( title);
+    _ += escapeHtml(title);
     _ += "</h1><p class=\"big\">A paragraph with a ";
     _ += escapeHtml(injected);
     _ += " value. More text</p></body></html>";
