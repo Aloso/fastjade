@@ -95,8 +95,7 @@ app.use('/help', function(req, res) {
 
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
   * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
-  * Security issue? In javascript sections, the user has access to some local variables of the template engine.
-  * The variable name `_` can't be used.
+  * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script will crash.
   * fastjade behaves differently than jade when indentation is imperfect:
     ```jade
     div
