@@ -94,7 +94,7 @@ app.use('/help', function(req, res) {
 ## Known issues
 
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
-  * `extends`, `block` and `include` is not supported yet, but I will add it very soon.
+  * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
   * Tag names can't be omitted when a class or id is specified: `#some-id`
   * Security issue? In javascript sections, the user has access to some local variables of the template engine.
   * The variable name `_` can't be used.
@@ -108,7 +108,7 @@ app.use('/help', function(req, res) {
 
 ## Not supported yet
 
-Here are some missing jade features that are less essential.
+This implementation supports javascript and the most common features. Here are some missing jade features that are less essential.
 
   * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
   * Single quotes for html attributes like: `html(lang='en')`
