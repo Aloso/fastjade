@@ -91,32 +91,6 @@ app.use('/help', function(req, res) {
 
 ```
 
-## Known issues / incompatibilities with jade
-
-  * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
-  * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
-  * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
-  * when dealing with imperfect indentation, fastjade behaves more logical than jade:
-    ```jade
-    div
-       p Hello
-      p World    <- in jade, this <p> is outside the <div>
-    ```
-
-## Not supported yet
-
-This implementation supports javascript and the most common features. Here are some missing jade features that are less essential.
-
-  * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
-  * Style attributes as JSON: `a(style={color: 'red', background: 'green'})`
-  * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
-  * `&attributes`
-  * Multi-line javascript
-
-## Bugs
-
-This is a very early release. Please do not use this template engine in production (yet) since there might be bugs. **Please report all bugs you find!** Thanks.
-
 ## Browser version
 
 fastjade can run in the browser, too. The usage is easy:
@@ -133,3 +107,48 @@ fastjade can run in the browser, too. The usage is easy:
     var html = FastJade.parse(FastJade.compile(text));
 </script>
 ```
+
+## Known issues
+
+  * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
+  * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work (yet), but can be realized with actual javascript
+  * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
+
+
+## Not supported yet
+
+  * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
+  * Style attributes as JSON are supported, but not inline:
+    ```jade
+    //- works:
+    - var styleAttributes = {color: 'red', background: 'green'}
+    a(style=styleAttributes)
+    
+    //- doesn't work in fastjade:
+    a(style={color: 'red', background: 'green'})
+    ```
+  * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
+  * `&attributes`
+  * Multi-line javascript
+
+## Known incompatibilities with jade
+
+  * Unlike jade, fastjade converts CSS attributes: `{backgroundColor: "red"}` becomes `"background-color:red"`.
+  * When passing an object to an html attribute, it is automatically treated as CSS:
+    ```jade
+    - var attrs = {isActive: title === "Hello World"}
+    p(style=attrs)
+    ```
+    ```html
+    <p style="is-active:true"></p>
+    ```
+  * When dealing with imperfect indentation, fastjade behaves more logical than jade:
+    ```jade
+    div
+       p Hello
+      p World    <- in jade, this <p> is outside the <div>
+    ```
+
+## Bugs
+
+This is a very early release. Please do not use this template engine in production (yet) since there might be bugs. **Please report all bugs you find!** Thanks.
