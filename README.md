@@ -91,20 +91,32 @@ app.use('/help', function(req, res) {
 
 ```
 
-##Known issues
+## Known issues
 
-  * Javascript-like constructs (`if/else`, `each`, `case`) don't work, but can be realized with actual javascript
-  * The compiler behaves differently than *jade* when indentation is imperfect:
+  * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
+  * `extends`, `block` and `include` is not supported yet, but I will add it very soon.
+  * *fast-jade* behaves differently than *jade* when indentation is imperfect:
     ```jade
     div
        p Hello
       p World    <- In jade, this <p> is not inside the <div>
     ```
-  * Single quotes for html attributes like `html(lang='en')` are not allowed
-  * Boolean attributes `input(checked=true)` don't work since fast-jade thinks that `true` is a variable
+  * Tag names can't be omitted when a class or id is specified: `#some-id`
   * Self-closing tags don't end with a slash (`<br>` instead of `<br/>`), which is wrong in XML
-  * Style attributes can't be entered as JSON: `a(style={color: 'red', background: 'green'})`
-  * No conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
-  * `&attributes` is not supported
-  * Multi-line javascript is not supported
-  * Invisible comments `//-` are not supported
+
+## Not supported yet
+
+Here are some missing jade features that are less essential.
+
+  * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
+  * Single quotes for html attributes like: `html(lang='en')`
+  * Boolean html attributes without quotes: `input(checked=true)`
+  * Style attributes as JSON: `a(style={color: 'red', background: 'green'})`
+  * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
+  * `&attributes`
+  * Multi-line javascript
+  * Invisible comments: `//-`
+
+## Bugs
+
+This is a very early release. Please do not use this template engine in production (yet) since there might be bugs. **Please report all bugs you find!** Thanks.
