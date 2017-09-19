@@ -7,7 +7,7 @@ Here is a simple jade template:
 // Create variables
 - var title = "Hello World!"
 - var injected = true
-!!! 5
+doctype
 html
   head
     title= title
