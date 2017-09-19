@@ -46,10 +46,10 @@ var T_STRING = 0,
     T_FINAL_STRING = 1,
     T_HTML_NODE = 2,
     T_HTML_COMMENT = 3,
-    T_VARIABLE_JS = 4,
-    T_VARIABLE_JS_ESC = 5,
-    T_INJECTED_JS = 6,
-    T_ASSIGNMENT_JS = 7;
+    T_INV_COMMENT = 4,
+    T_VARIABLE_JS = 5,
+    T_VARIABLE_JS_ESC = 6,
+    T_INJECTED_JS = 7;
 
 function addSlashes(string) {
     return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -175,16 +175,13 @@ function PartsCombinator() {
                     r += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
                     break;
                 case T_VARIABLE_JS_ESC:
-                    r += "    _ += escapeHtml(" + addSlashes(el.val).replace(/\n/g, "\\n") + ");\n";
+                    r += "    _ += escapeHtml(" + el.val.replace(/\n/g, "\\n") + ");\n";
                     break;
                 case T_VARIABLE_JS:
                     r += "    _ += " + el.val + ";\n";
                     break;
                 case T_INJECTED_JS:
                     r += "    " + el.val + "\n";
-                    break;
-                case T_ASSIGNMENT_JS:
-                    r += "    var " + el.val.varName + " = " + el.val.value + ";\n";
                     break;
             }
         }
@@ -218,8 +215,7 @@ function _parse(string) {
     var firstNWcharPos;
     
     //               tag          classes/IDs                     (    key                         =   value                                     )
-    var nodeRegex = /[a-z0-9_-]+([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
-    var assignmentRegex = /^[a-z0-9_\u00C0-\u024F-]+\s+=/i;
+    var nodeRegex = /[a-z0-9_-]*([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
     
     for (var i = 0; i < lines.length; i++) {
         line = lines[i];
@@ -276,12 +272,12 @@ function _parse(string) {
             trimmedLine = trimmedLine.substring(1);
             if (trimmedLine[0] === " ") trimmedLine = trimmedLine.substring(1);
             nextParent.add(new Variable(trimmedLine, T_STRING), firstNWcharPos);
-        } else if (trimmedLine.match(assignmentRegex)) {
-            // variable assignment
-            var equalPos = trimmedLine.indexOf("=");
-            var varName = trimmedLine.substring(0, equalPos).replace(/\s+$/, "");
-            var value = trimmedLine.substring(equalPos + 1);
-            nextParent.add(new Variable({varName: varName, value: value}, T_ASSIGNMENT_JS), firstNWcharPos);
+        } else if (trimmedLine[0] === "=") {
+            nextParent.add(new Variable(trimmedLine.substring(1), T_VARIABLE_JS_ESC), firstNWcharPos);
+        } else if (trimmedLine.substring(0, 2) === "!=") {
+            nextParent.add(new Variable(trimmedLine.substring(2), T_VARIABLE_JS), firstNWcharPos);
+        } else if (trimmedLine.substring(0, 3) === "//-") {
+            // invisible comment
         } else if (trimmedLine.substring(0, 2) === "//") {
             // comment
             lastNode = nextParent.add(new Variable("//", T_HTML_COMMENT), firstNWcharPos);
@@ -289,7 +285,7 @@ function _parse(string) {
             if (commentText !== "") {
                 lastNode.add(new Variable(commentText, T_FINAL_STRING));
             }
-        } else if (trimmedLine.match(/^(!!!|doctype\b)/i)) {
+        } else if (trimmedLine.match(/^doctype\b/i)) {
             // doctype
             var parts = trimmedLine.split(" ");
             if (parts[1]) {
@@ -297,7 +293,7 @@ function _parse(string) {
                 if (doctypes[args]) {
                     nextParent.add(new Variable(doctypes[args], T_FINAL_STRING), firstNWcharPos);
                 } else {
-                    nextParent.add(new Variable(trimmedLine, T_FINAL_STRING), 0);
+                    nextParent.add(new Variable("<!DOCTYPE " + parts[1].trim() + ">", T_FINAL_STRING), firstNWcharPos);
                 }
             } else {
                 nextParent.add(new Variable(doctypes["default"], T_FINAL_STRING), firstNWcharPos);
@@ -388,6 +384,8 @@ function parseNodeString(string) {
     var cssArgs = nodeName.substring(nodeNameEnd);
     nodeName = nodeName.substring(0, nodeNameEnd);
     
+    if (nodeName === "") nodeName = "div";
+    
     args = args.replace(/=([^" ]+)/g, "=\"#{$1}\"");
     
     var allArgsArr = [args];
@@ -423,7 +421,7 @@ function makeParts(parsedTree, combinator, isInComment) {
     
     if (content === null) {
         for (i = 0; i < children.length; i++) {
-            makeParts(children[i], combinator);
+            makeParts(children[i], combinator, isInComment);
         }
     } else switch (content.type) {
         case T_STRING:
@@ -433,49 +431,61 @@ function makeParts(parsedTree, combinator, isInComment) {
             combinator.add(content.val, T_FINAL_STRING);
             return;
         case T_HTML_NODE:
-            if (content.val.args && content.val.args.length > 0) {
-                combinator.add("<" + content.val.nodeName + " ", T_FINAL_STRING);
-                combinator.addMany(stringSplitter(content.val.args));
-                combinator.add(">", T_FINAL_STRING);
+            var nodeNameLC = content.val.nodeName.toLowerCase();
+            
+            if (selfClosingNodes[nodeNameLC]) {
+                if (content.val.args.length > 0) {
+                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
+                    combinator.addMany(stringSplitter(content.val.args));
+                    combinator.add("/>", T_FINAL_STRING);
+                } else {
+                    combinator.add("<" + nodeNameLC + "/>", T_FINAL_STRING);
+                }
             } else {
-                combinator.add("<" + content.val.nodeName + ">", T_FINAL_STRING);
-            }
-            for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator);
-            }
-            if (!selfClosingNodes[content.val.nodeName.toLowerCase()]) {
-                combinator.add("</" + content.val.nodeName + ">", T_FINAL_STRING);
+                if (content.val.args && content.val.args.length > 0) {
+                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
+                    combinator.addMany(stringSplitter(content.val.args));
+                    combinator.add(">", T_FINAL_STRING);
+                } else {
+                    combinator.add("<" + nodeNameLC + ">", T_FINAL_STRING);
+                }
+                for (i = 0; i < children.length; i++) {
+                    makeParts(children[i], combinator, isInComment);
+                }
+                combinator.add("</" + nodeNameLC + ">", T_FINAL_STRING);
             }
             return;
         case T_HTML_COMMENT:
-            if (!isInComment) combinator.add("<!-- ", T_FINAL_STRING);
-            for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator, true);
+            if (!isInComment) {
+                combinator.add("<!-- ", T_FINAL_STRING);
+                for (i = 0; i < children.length; i++) {
+                    makeParts(children[i], combinator, true);
+                }
+                combinator.add(" -->", T_FINAL_STRING);
+            } else {
+                combinator.add("[!-- ", T_FINAL_STRING);
+                for (i = 0; i < children.length; i++) {
+                    makeParts(children[i], combinator, true);
+                }
+                combinator.add(" --]", T_FINAL_STRING);
             }
-            if (!isInComment) combinator.add(" -->", T_FINAL_STRING);
             return;
         case T_VARIABLE_JS:
         case T_VARIABLE_JS_ESC:
             combinator.add(content.val, content.type);
             for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator);
+                makeParts(children[i], combinator, isInComment);
             }
             return;
         case T_INJECTED_JS:
             if (children.length > 0) {
                 combinator.add(content.val + " {", T_INJECTED_JS);
                 for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator);
+                    makeParts(children[i], combinator, isInComment);
                 }
                 combinator.add("}", T_INJECTED_JS);
             } else {
                 combinator.add(content.val, T_INJECTED_JS);
-            }
-            return;
-        case T_ASSIGNMENT_JS:
-            combinator.add(content.val, T_ASSIGNMENT_JS);
-            for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator);
             }
             return;
         default:
