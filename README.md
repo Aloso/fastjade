@@ -21,19 +21,19 @@ html
 Pre-compiling it results in a function:
 
 ```javascript
-function anonymous(ctx) {
-  with (ctx || {}) {
+function anonymous(context) {
+  with (context || {}) {
     var _ = "";
-    _ += "<!-- Create variables -->";
+    _ += "<!-- Create variables -->\n";
     var title = "Hello World!"
     var injected = true
-    _ += "<!DOCTYPE html><html><head><title>";
-    _ += title;
-    _ += "</title><meta charset=\"utf-8\"></head><body><h1>";
-    _ += escapeHtml(title);
-    _ += "</h1><p class=\"big\">A paragraph with a ";
-    _ += escapeHtml(injected);
-    _ += " value. More text</p></body></html>";
+    _ += "<!DOCTYPE html>\n<html>\n<head>\n<title>";
+    _ += (typeof title === 'undefined') ? 'undefined' : escapeHtml(title);
+    _ += "</title>\n<meta charset=\"utf-8\"/>\n</head>\n<body>\n<h1>";
+    _ += (typeof title === 'undefined') ? 'undefined' : title;
+    _ += "</h1>\n<p class=\"big\">\nA paragraph with a ";
+    _ += (typeof injected === 'undefined') ? 'undefined' : escapeHtml(injected);
+    _ += " value. \nMore text\n</p>\n</body>\n</html>\n";
     return _;
   }
 }
@@ -91,16 +91,16 @@ app.use('/help', function(req, res) {
 
 ```
 
-## Known issues
+## Known issues / incompatibilities with jade
 
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work, but can be realized with actual javascript
   * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
-  * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script will crash.
-  * fastjade behaves different than jade when indentation is imperfect:
+  * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
+  * when dealing with imperfect indentation, fastjade behaves more logical than jade:
     ```jade
     div
        p Hello
-      p World    <- This <p> is inside the <div>, but it shouldn't
+      p World    <- in jade, this <p> is outside the <div>
     ```
 
 ## Not supported yet
