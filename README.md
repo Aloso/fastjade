@@ -108,7 +108,6 @@ app.use('/help', function(req, res) {
 This implementation supports javascript and the most common features. Here are some missing jade features that are less essential.
 
   * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
-  * Boolean html attributes without quotes: `input(checked=true)`
   * Style attributes as JSON: `a(style={color: 'red', background: 'green'})`
   * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
   * `&attributes`
