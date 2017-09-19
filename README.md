@@ -116,3 +116,16 @@ This implementation supports javascript and the most common features. Here are s
 ## Bugs
 
 This is a very early release. Please do not use this template engine in production (yet) since there might be bugs. **Please report all bugs you find!** Thanks.
+
+## Browser version
+
+fastjade can run in the browser, too. The usage is easy:
+
+```html
+<!-- at the end of the body: -->
+<script type="text/javascript" src="fastjade-browser.js"></script>
+<script>
+    var text = "doctype\nhtml\n  head\n    title Hello World!\n  body\n    h1 Hello World!";
+    var html = FastJade.parse(FastJade.compile(text));
+</script>
+```
