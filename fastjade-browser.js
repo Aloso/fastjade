@@ -44,10 +44,9 @@ var FastJade = (function() {
         T_FINAL_STRING = 1,
         T_HTML_NODE = 2,
         T_HTML_COMMENT = 3,
-        T_INV_COMMENT = 4,
-        T_VARIABLE_JS = 5,
-        T_VARIABLE_JS_ESC = 6,
-        T_INJECTED_JS = 7;
+        T_VARIABLE_JS = 4,
+        T_VARIABLE_JS_ESC = 5,
+        T_INJECTED_JS = 6;
 
     function addSlashes(string) {
         return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -162,10 +161,10 @@ var FastJade = (function() {
          * This STRING will then be converted to a function using eval()
          */
         this.createFunction = function () {
-            var r = "function anonymous(ctx) {\n" +
-                    "  with (ctx || {}) {\n" +
+            var r = "function anonymous(context) {\n" +
+                    "  with (context || {}) {\n" +
                     "    var _ = \"\";\n";
-            var el;
+            var el, x;
             for (var i = 0; i < res.length; i++) {
                 el = res[i];
                 switch (el.type) {
@@ -173,10 +172,12 @@ var FastJade = (function() {
                         r += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
                         break;
                     case T_VARIABLE_JS_ESC:
-                        r += "    _ += escapeHtml(" + el.val.replace(/\n/g, "\\n") + ");\n";
+                        x = el.val;
+                        r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
                         break;
                     case T_VARIABLE_JS:
-                        r += "    _ += " + el.val + ";\n";
+                        x = el.val;
+                        r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : " + x + ";\n";
                         break;
                     case T_INJECTED_JS:
                         r += "    " + el.val + "\n";
@@ -229,7 +230,7 @@ var FastJade = (function() {
                         // define indent for text block
                         textIndent = firstNWcharPos;
                         line = line.substring(textIndent);
-                        lastNode.add(new Variable(" " + line + "\n", T_STRING), textIndent);
+                        lastNode.add(new Variable(line, T_STRING), textIndent);
                     } else {
                         // indent too short; text block is empty
                         isText = false;
@@ -241,7 +242,7 @@ var FastJade = (function() {
                     }
                     // line is part of text block
                     line = line.substring(textIndent);
-                    lastNode.add(new Variable(" " + line + "\n", T_STRING), textIndent);
+                    lastNode.add(new Variable(line, T_STRING), textIndent);
                     continue;
                 } else if (line.length < textIndent) {
                     // line is too short -> ignored
@@ -383,8 +384,10 @@ var FastJade = (function() {
         nodeName = nodeName.substring(0, nodeNameEnd);
         
         if (nodeName === "") nodeName = "div";
-        
-        args = args.replace(/=([^"' ]+)/g, "=\"#{$1}\"").replace(/="#{(true|false)}"/g, "=$1");
+    
+        args = args
+                .replace(/=([^"' ]+)/g, "=\"#{$1}\"")
+                .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*="#{(true|false)}"/g, "$1=\"$1\"");
         
         var allArgsArr = [args];
         var className = [];
@@ -404,14 +407,15 @@ var FastJade = (function() {
         
         return new Variable({nodeName: nodeName, args: allArgsArr.join(" ")}, T_HTML_NODE);
     }
-
-
+    
+    
     /**
      * @param {SimpleNode} parsedTree
      * @param {PartsCombinator} combinator
      * @param {boolean?} isInComment
+     * @param {boolean?} breakAllStrings
      */
-    function makeParts(parsedTree, combinator, isInComment) {
+    function makeParts(parsedTree, combinator, isInComment, breakAllStrings) {
         var content = parsedTree.content;
         var children = parsedTree.children || [];
         
@@ -419,14 +423,16 @@ var FastJade = (function() {
         
         if (content === null) {
             for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator, isInComment);
+                makeParts(children[i], combinator, isInComment, breakAllStrings);
             }
         } else switch (content.type) {
             case T_STRING:
                 combinator.addMany(stringSplitter(content.val));
+                if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
                 return;
             case T_FINAL_STRING:
                 combinator.add(content.val, T_FINAL_STRING);
+                if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
                 return;
             case T_HTML_NODE:
                 var nodeNameLC = content.val.nodeName.toLowerCase();
@@ -435,10 +441,22 @@ var FastJade = (function() {
                     if (content.val.args.length > 0) {
                         combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
                         combinator.addMany(stringSplitter(content.val.args));
-                        combinator.add("/>", T_FINAL_STRING);
+                        combinator.add("/>\n", T_FINAL_STRING);
                     } else {
-                        combinator.add("<" + nodeNameLC + "/>", T_FINAL_STRING);
+                        combinator.add("<" + nodeNameLC + "/>\n", T_FINAL_STRING);
                     }
+                } else if (children.length > 1 || (children[0] && children[0].children)) {
+                    if (content.val.args && content.val.args.length > 0) {
+                        combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
+                        combinator.addMany(stringSplitter(content.val.args));
+                        combinator.add(">\n", T_FINAL_STRING);
+                    } else {
+                        combinator.add("<" + nodeNameLC + ">\n", T_FINAL_STRING);
+                    }
+                    for (i = 0; i < children.length; i++) {
+                        makeParts(children[i], combinator, isInComment, true);
+                    }
+                    combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
                 } else {
                     if (content.val.args && content.val.args.length > 0) {
                         combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
@@ -450,22 +468,38 @@ var FastJade = (function() {
                     for (i = 0; i < children.length; i++) {
                         makeParts(children[i], combinator, isInComment);
                     }
-                    combinator.add("</" + nodeNameLC + ">", T_FINAL_STRING);
+                    combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
                 }
                 return;
             case T_HTML_COMMENT:
                 if (!isInComment) {
-                    combinator.add("<!-- ", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true);
+                    if (children.length > 1) {
+                        combinator.add("<!--\n", T_FINAL_STRING);
+                        for (i = 0; i < children.length; i++) {
+                            makeParts(children[i], combinator, true, true);
+                        }
+                        combinator.add("-->\n", T_FINAL_STRING);
+                    } else {
+                        combinator.add("<!-- ", T_FINAL_STRING);
+                        for (i = 0; i < children.length; i++) {
+                            makeParts(children[i], combinator, true);
+                        }
+                        combinator.add(" -->\n", T_FINAL_STRING);
                     }
-                    combinator.add(" -->", T_FINAL_STRING);
                 } else {
-                    combinator.add("/* ", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true);
+                    if (children.length > 1) {
+                        combinator.add("/*\n", T_FINAL_STRING);
+                        for (i = 0; i < children.length; i++) {
+                            makeParts(children[i], combinator, true, true);
+                        }
+                        combinator.add("*/\n", T_FINAL_STRING);
+                    } else {
+                        combinator.add("/* ", T_FINAL_STRING);
+                        for (i = 0; i < children.length; i++) {
+                            makeParts(children[i], combinator, true);
+                        }
+                        combinator.add(" */\n", T_FINAL_STRING);
                     }
-                    combinator.add(" */", T_FINAL_STRING);
                 }
                 return;
             case T_VARIABLE_JS:
@@ -542,13 +576,20 @@ var FastJade = (function() {
 
 
     ////////////////////////////////     MODULE     ////////////////////////////////
-
+    
+    window.performance = window.performance || {};
+    performance.now = (function () {
+        // noinspection JSUnresolvedVariable
+        return performance.now || performance.mozNow || performance.msNow ||
+                performance.oNow || performance.webkitNow || Date.now
+    })();
+    
     var compiledFuncs = {};
 
     function compileToString(str) {
         if (!str) throw new Error("No string was given for compilation");
         var combinator = new PartsCombinator();
-        makeParts(_parse(str), combinator);
+        makeParts(_parse(str), combinator, false, true);
         return combinator.createFunction();
     }
 
@@ -563,9 +604,8 @@ var FastJade = (function() {
             else throw new Error("No string was given for compilation")
         }
         
-        var tm = +new Date();
         var combinator = new PartsCombinator();
-        makeParts(_parse(str), combinator);
+        makeParts(_parse(str), combinator, false, true);
         var res = combinator.createFunction();
         try {
             eval(res);
@@ -577,10 +617,7 @@ var FastJade = (function() {
         
         if (name) {
             // cache the result
-            console.log("COMPILED AND CACHED '" + name + "' [" + (+new Date() - tm) + "ms]");
             compiledFuncs[name] = func;
-        } else {
-            console.log("COMPILED STRING [" + (+new Date() - tm) + "ms]");
         }
         return func;
     }
@@ -591,13 +628,16 @@ var FastJade = (function() {
     }
 
     function parseFromString(templateFunc, context) {
+        var res;
         try {
             eval(templateFunc);
+            // noinspection JSUnresolvedFunction
+            res = anonymous(context);
         } catch (e) {
             throw new Error("Invalid javascript in Jade template (" + e + ")");
         }
-        // noinspection JSUnresolvedFunction
-        return anonymous(context);
+        if (res === undefined) throw new Error("Invalid fastjade return value");
+        return res;
     }
 
     return {
