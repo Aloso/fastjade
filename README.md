@@ -117,7 +117,6 @@ This implementation supports javascript and the most common features. Here are s
   * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
   * `&attributes`
   * Multi-line javascript
-  * Invisible comments: `//-`
 
 ## Bugs
 
