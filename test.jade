@@ -24,3 +24,20 @@ html(lang="de")
       p This is a node inside the comment. It won't appear on the website.
         // This is an HTML comment inside an HTML comment.
         // Inner html comments use square brackets instead of angle brackets.
+
+    //- The following two nodes are identical:
+    a.button#red(href="#1") Click me!
+    a(href="#1" id="red" class="button") Click me!
+    
+    //- Now some javascript:
+    - var test = "Hello World"
+    - var options = ['Anne', 'Henry', 'Paul', '<b>Ella</b>', 'Kim', 'Rita']
+    select(name=test)
+      - for (var i = 0; i < options.length; i++)
+        - var str = test + " " + i
+        option(value=str)= options[i]
+
+    //- Another example:
+    ul
+      - for (var i = 0; i < options.length; i++)
+        li !{options[i]}
