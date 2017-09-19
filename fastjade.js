@@ -46,10 +46,9 @@ var T_STRING = 0,
     T_FINAL_STRING = 1,
     T_HTML_NODE = 2,
     T_HTML_COMMENT = 3,
-    T_INV_COMMENT = 4,
-    T_VARIABLE_JS = 5,
-    T_VARIABLE_JS_ESC = 6,
-    T_INJECTED_JS = 7;
+    T_VARIABLE_JS = 4,
+    T_VARIABLE_JS_ESC = 5,
+    T_INJECTED_JS = 6;
 
 function addSlashes(string) {
     return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -143,7 +142,7 @@ function PartsCombinator() {
     var res = [];
     var last = null;
     var lastType = -1;
-
+    
     this.add = function (val, type) {
         if (type === lastType && lastType === T_FINAL_STRING) {
             last.val += val;
@@ -164,10 +163,10 @@ function PartsCombinator() {
      * This STRING will then be converted to a function using eval()
      */
     this.createFunction = function () {
-        var r = "function anonymous(ctx) {\n" +
-                "  with (ctx || {}) {\n" +
+        var r = "function anonymous(context) {\n" +
+                "  with (context || {}) {\n" +
                 "    var _ = \"\";\n";
-        var el;
+        var el, x;
         for (var i = 0; i < res.length; i++) {
             el = res[i];
             switch (el.type) {
@@ -175,10 +174,12 @@ function PartsCombinator() {
                     r += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
                     break;
                 case T_VARIABLE_JS_ESC:
-                    r += "    _ += escapeHtml(" + el.val.replace(/\n/g, "\\n") + ");\n";
+                    x = el.val;
+                    r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
                     break;
                 case T_VARIABLE_JS:
-                    r += "    _ += " + el.val + ";\n";
+                    x = el.val;
+                    r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : " + x + ";\n";
                     break;
                 case T_INJECTED_JS:
                     r += "    " + el.val + "\n";
@@ -196,13 +197,10 @@ function PartsCombinator() {
 
 ////////////////////////////////    PROGRAM     ////////////////////////////////
 
-/**
- * @param {string} string
- */
 function _parse(string) {
     var lines = string.replace(/\r/g, "").split("\n");
     var resultTree = Node.makeRoot();
-
+    
     /** @type {string} */
     var line, trimmedLine;
     /** @type {Node} */
@@ -213,13 +211,13 @@ function _parse(string) {
     var lastIndent = -1, textIndent = -1;
     /** @type {int} */
     var firstNWcharPos;
-
+    
     //               tag          classes/IDs                     (    key                         =   value                                             )
     var nodeRegex = /[a-z0-9_-]*([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|'[^']*?'|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
-
+    
     for (var i = 0; i < lines.length; i++) {
         line = lines[i];
-
+        
         if (isText) {
             firstNWcharPos = line.search(/\S|$/);
             if (textIndent === -1) {
@@ -231,7 +229,7 @@ function _parse(string) {
                     // define indent for text block
                     textIndent = firstNWcharPos;
                     line = line.substring(textIndent);
-                    lastNode.add(new Variable(" " + line + "\n", T_STRING), textIndent);
+                    lastNode.add(new Variable(line, T_STRING), textIndent);
                 } else {
                     // indent too short; text block is empty
                     isText = false;
@@ -243,7 +241,7 @@ function _parse(string) {
                 }
                 // line is part of text block
                 line = line.substring(textIndent);
-                lastNode.add(new Variable(" " + line + "\n", T_STRING), textIndent);
+                lastNode.add(new Variable(line, T_STRING), textIndent);
                 continue;
             } else if (line.length < textIndent) {
                 // line is too short -> ignored
@@ -253,11 +251,11 @@ function _parse(string) {
                 isText = false;
             }
         }
-
+        
         firstNWcharPos = line.search(/\S/);
         if (firstNWcharPos === -1) continue;
         trimmedLine = line.substring(firstNWcharPos);
-
+        
         /** @type {Node|undefined} */
         var nextParent;
         for (var tmp_node = lastNode; tmp_node !== undefined; tmp_node = tmp_node.parent) {
@@ -266,7 +264,7 @@ function _parse(string) {
                 break;
             }
         }
-
+        
         if (trimmedLine[0] === "|") {
             // simple text
             trimmedLine = trimmedLine.substring(1);
@@ -310,25 +308,25 @@ function _parse(string) {
                 args: "type=\"text/javascript\""
             }, T_HTML_NODE), firstNWcharPos);
             isText = true;
-            lastIndent = firstNWcharPos;
             textIndent = -1;
+            lastIndent = firstNWcharPos;
         } else {
             // html element
-
+            
             /** @type {Array|string} */
             var node = trimmedLine.match(nodeRegex);
             if (node !== null) {
                 node = node[0];
                 var nodeElem = parseNodeString(node);
                 var text = trimmedLine.substring(node.length);
-
-                if (text.match(/^=/)) {
+                
+                if (text.substring(0, 1) === "=") {
                     lastNode = nextParent.add(nodeElem, firstNWcharPos);
                     lastNode.add(new Variable(text.substring(1), T_VARIABLE_JS_ESC), 0);
-                } else if (text.match(/^!=/)) {
+                } else if (text.substring(0, 2) === "!=") {
                     lastNode = nextParent.add(nodeElem, firstNWcharPos);
                     lastNode.add(new Variable(text.substring(2), T_VARIABLE_JS), 0);
-                } else if (text.match(/^\./)) {
+                } else if (text.substring(0, 1) === ".") {
                     isText = true;
                     textIndent = -1;
                     lastIndent = firstNWcharPos;
@@ -342,7 +340,7 @@ function _parse(string) {
                         if (text[0]) {
                             if (text[0] === "=") {
                                 // assignment
-
+                                
                             } else {
                                 lastNode.add(new Variable(text, T_STRING), 0);
                             }
@@ -360,7 +358,7 @@ function _parse(string) {
             }
         }
     }
-
+    
     return resultTree.simplify();
 }
 
@@ -383,18 +381,20 @@ function parseNodeString(string) {
     var nodeNameEnd = nodeName.search(/\.|#|$/);
     var cssArgs = nodeName.substring(nodeNameEnd);
     nodeName = nodeName.substring(0, nodeNameEnd);
-
+    
     if (nodeName === "") nodeName = "div";
-
-    args = args.replace(/=([^"' ]+)/g, "=\"#{$1}\"").replace(/="#{(true|false)}"/g, "=$1");
-
+    
+    args = args
+            .replace(/=([^"' ]+)/g, "=\"#{$1}\"")
+            .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*="#{(true|false)}"/g, "$1=\"$1\"");
+    
     var allArgsArr = [args];
     var className = [];
-
+    
     if (cssArgs !== "") {
         var idMatch = cssArgs.match(/#([^\s.#]+)/);
         if (idMatch !== null) allArgsArr.push("id=\"" + idMatch[1] + "\"");
-
+        
         var classMatch = cssArgs.match(/\.([^\s.#]+)/g);
         if (classMatch !== null) {
             for (var i = 0; i < classMatch.length; i++) {
@@ -403,7 +403,7 @@ function parseNodeString(string) {
             allArgsArr.push("class=\"" + className.join(" ") + "\"");
         }
     }
-
+    
     return new Variable({nodeName: nodeName, args: allArgsArr.join(" ")}, T_HTML_NODE);
 }
 
@@ -412,35 +412,50 @@ function parseNodeString(string) {
  * @param {SimpleNode} parsedTree
  * @param {PartsCombinator} combinator
  * @param {boolean?} isInComment
+ * @param {boolean?} breakAllStrings
  */
-function makeParts(parsedTree, combinator, isInComment) {
+function makeParts(parsedTree, combinator, isInComment, breakAllStrings) {
     var content = parsedTree.content;
     var children = parsedTree.children || [];
-
+    
     var i;
-
+    
     if (content === null) {
         for (i = 0; i < children.length; i++) {
-            makeParts(children[i], combinator, isInComment);
+            makeParts(children[i], combinator, isInComment, breakAllStrings);
         }
     } else switch (content.type) {
         case T_STRING:
             combinator.addMany(stringSplitter(content.val));
+            if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
             return;
         case T_FINAL_STRING:
             combinator.add(content.val, T_FINAL_STRING);
+            if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
             return;
         case T_HTML_NODE:
             var nodeNameLC = content.val.nodeName.toLowerCase();
-
+            
             if (selfClosingNodes[nodeNameLC]) {
                 if (content.val.args.length > 0) {
                     combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
                     combinator.addMany(stringSplitter(content.val.args));
-                    combinator.add("/>", T_FINAL_STRING);
+                    combinator.add("/>\n", T_FINAL_STRING);
                 } else {
-                    combinator.add("<" + nodeNameLC + "/>", T_FINAL_STRING);
+                    combinator.add("<" + nodeNameLC + "/>\n", T_FINAL_STRING);
                 }
+            } else if (children.length > 1 || (children[0] && children[0].children)) {
+                if (content.val.args && content.val.args.length > 0) {
+                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
+                    combinator.addMany(stringSplitter(content.val.args));
+                    combinator.add(">\n", T_FINAL_STRING);
+                } else {
+                    combinator.add("<" + nodeNameLC + ">\n", T_FINAL_STRING);
+                }
+                for (i = 0; i < children.length; i++) {
+                    makeParts(children[i], combinator, isInComment, true);
+                }
+                combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
             } else {
                 if (content.val.args && content.val.args.length > 0) {
                     combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
@@ -452,22 +467,38 @@ function makeParts(parsedTree, combinator, isInComment) {
                 for (i = 0; i < children.length; i++) {
                     makeParts(children[i], combinator, isInComment);
                 }
-                combinator.add("</" + nodeNameLC + ">", T_FINAL_STRING);
+                combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
             }
             return;
         case T_HTML_COMMENT:
             if (!isInComment) {
-                combinator.add("<!-- ", T_FINAL_STRING);
-                for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator, true);
+                if (children.length > 1) {
+                    combinator.add("<!--\n", T_FINAL_STRING);
+                    for (i = 0; i < children.length; i++) {
+                        makeParts(children[i], combinator, true, true);
+                    }
+                    combinator.add("-->\n", T_FINAL_STRING);
+                } else {
+                    combinator.add("<!-- ", T_FINAL_STRING);
+                    for (i = 0; i < children.length; i++) {
+                        makeParts(children[i], combinator, true);
+                    }
+                    combinator.add(" -->\n", T_FINAL_STRING);
                 }
-                combinator.add(" -->", T_FINAL_STRING);
             } else {
-                combinator.add("/* ", T_FINAL_STRING);
-                for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator, true);
+                if (children.length > 1) {
+                    combinator.add("/*\n", T_FINAL_STRING);
+                    for (i = 0; i < children.length; i++) {
+                        makeParts(children[i], combinator, true, true);
+                    }
+                    combinator.add("*/\n", T_FINAL_STRING);
+                } else {
+                    combinator.add("/* ", T_FINAL_STRING);
+                    for (i = 0; i < children.length; i++) {
+                        makeParts(children[i], combinator, true);
+                    }
+                    combinator.add(" */\n", T_FINAL_STRING);
                 }
-                combinator.add(" */", T_FINAL_STRING);
             }
             return;
         case T_VARIABLE_JS:
@@ -501,7 +532,7 @@ function makeParts(parsedTree, combinator, isInComment) {
 function stringSplitter(string) {
     var res = [];
     var pos = 0, posBefore, endPos;
-
+    
     while (pos <= string.length) {
         posBefore = pos;
         pos = string.indexOf("#{", posBefore);
@@ -559,12 +590,12 @@ function compile(str, name) {
     if (name && compiledFuncs[name]) {
         return compiledFuncs[name];
     }
-
+    
     if (!str) {
         if (name) throw new Error("Template '" + name + "' doesn't exist");
         else throw new Error("No string was given for compilation")
     }
-
+    
     var tm = +new Date();
     var combinator = new PartsCombinator();
     makeParts(_parse(str), combinator);
@@ -576,7 +607,7 @@ function compile(str, name) {
     }
     // noinspection JSUnresolvedVariable
     var func = anonymous;
-
+    
     if (name) {
         // cache the result
         console.log("COMPILED AND CACHED '" + name + "' [" + (+new Date() - tm) + "ms]");
@@ -594,12 +625,10 @@ function parse(templateFunc, context) {
 
 function parseFromString(templateFunc, context) {
     try {
-        eval(templateFunc);
+        return eval(templateFunc)(context);
     } catch (e) {
         throw new Error("Invalid javascript in Jade template");
     }
-    // noinspection JSUnresolvedFunction
-    return anonymous(context);
 }
 
 function readFiles(dirname, onFileContent, onError) {
@@ -608,10 +637,10 @@ function readFiles(dirname, onFileContent, onError) {
             onError(err, 0);
             return;
         }
-
+        
         var num = 0;
         filenames.forEach(function () { num++ });
-
+        
         filenames.forEach(function(filename) {
             fs.readFile(path.join(dirname, filename), 'utf-8', function(err, content) {
                 if (err) {
@@ -629,7 +658,7 @@ function compileDirectory(directory, callback) {
     var targetDir = path.join(rootDir, directory);
     var itr = 0;
     var failedCompilations = 0;
-
+    
     readFiles(targetDir, function (filename, content, num) {
         compile(content, filename.replace(/\.[^/.]+$/, ""));
         itr++;
