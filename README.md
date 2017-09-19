@@ -133,7 +133,7 @@ fastjade can run in the browser, too. The usage is easy:
 
 ## Known incompatibilities with jade
 
-  * Unlike jade, fastjade converts CSS attributes: `{backgroundColor: "red"}` becomes `"background-color:red"`.
+  * Unlike jade, fastjade converts CSS attributes: `{backgroundColor: "red"}` becomes `"background-color:red"`. In Jade, you would have to write `{"background-color": "red"}`
   * When passing an object to an html attribute, it is automatically treated as CSS:
     ```jade
     - var attrs = {isActive: title === "Hello World"}
