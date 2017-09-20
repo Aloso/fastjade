@@ -1,6 +1,8 @@
 # fastjade
 Jade is one of the slowest template engines for Node.js. My implementation **pre-compiles** jade templates and should be a lot faster. However, I haven't tested it yet.
 
+<a href="http://aloso.bplaced.net/fastjade/">Homepage</a>
+
 Here is a simple jade template:
 
 ```jade
