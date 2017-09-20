@@ -115,6 +115,7 @@ fastjade can run in the browser, too. The usage is easy:
   * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work (yet), but can be realized with actual javascript
   * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
+  * Invisible comments (`//-`) can't have children - only the exact line is commented out.
 
 
 ## Not supported yet
