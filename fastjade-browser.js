@@ -60,8 +60,18 @@ var FastJade = (function() {
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
     }
-
-
+    
+    function objectToCssString(o) {
+        if (typeof o === "string") return o;
+        var vals = [];
+        for (var key in o) if (o.hasOwnProperty(key)) {
+            var keyTransformed = key.replace(/[A-Z]/g, function (match) {
+                return "-" + match.toLowerCase();
+            });
+            vals.push(keyTransformed + ":" + o[key]);
+        }
+        return vals.join("; ");
+    }
 
     //////////////////////////////// HELPER CLASSES ////////////////////////////////
 
@@ -244,7 +254,7 @@ var FastJade = (function() {
                     line = line.substring(textIndent);
                     lastNode.add(new Variable(line, T_STRING), textIndent);
                     continue;
-                } else if (line.length < textIndent) {
+                } else if (line.length < textIndent && line.match(/^\s*$/)) {
                     // line is too short -> ignored
                     continue;
                 } else {
@@ -256,7 +266,7 @@ var FastJade = (function() {
             firstNWcharPos = line.search(/\S/);
             if (firstNWcharPos === -1) continue;
             trimmedLine = line.substring(firstNWcharPos);
-        
+    
             /** @type {Node|undefined} */
             var nextParent;
             for (var tmp_node = lastNode; tmp_node !== undefined; tmp_node = tmp_node.parent) {
@@ -265,7 +275,7 @@ var FastJade = (function() {
                     break;
                 }
             }
-        
+            
             if (trimmedLine[0] === "|") {
                 // simple text
                 trimmedLine = trimmedLine.substring(1);
@@ -386,7 +396,7 @@ var FastJade = (function() {
         if (nodeName === "") nodeName = "div";
     
         args = args
-                .replace(/=([^"' ]+)/g, "=\"#{$1}\"")
+                .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*=([^"' ]+)/g, "!{(typeof $2 === 'undefined') ? '' : '$1=\"' + escapeHtml(objectToCssString($2)) + '\"'}")
                 .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*="#{(true|false)}"/g, "$1=\"$1\"");
         
         var allArgsArr = [args];
@@ -646,7 +656,8 @@ var FastJade = (function() {
         parse: parse,
         parseFromString: parseFromString,
         escapeHtml: escapeHtml,
-        addSlashes: addSlashes
+        addSlashes: addSlashes,
+        objectToCssString: objectToCssString
     };
     
 })();
