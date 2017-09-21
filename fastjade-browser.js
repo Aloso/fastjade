@@ -4,7 +4,7 @@
  */
 
 var FastJade = (function() {
-    
+
     ////////////////////////////////   RESOURCES    ////////////////////////////////
 
     var selfClosingNodes = {
@@ -46,7 +46,10 @@ var FastJade = (function() {
         T_HTML_COMMENT = 3,
         T_VARIABLE_JS = 4,
         T_VARIABLE_JS_ESC = 5,
-        T_INJECTED_JS = 6;
+        T_INJECTED_JS = 6,
+        T_INCLUDE = 7,
+        T_EXTEND = 8,
+        T_BLOCK = 9;
 
     function addSlashes(string) {
         return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -60,7 +63,7 @@ var FastJade = (function() {
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
     }
-    
+
     function objectToCssString(o) {
         if (typeof o === "string") return o;
         var vals = [];
@@ -72,6 +75,52 @@ var FastJade = (function() {
         }
         return vals.join("; ");
     }
+
+    /**
+     * This is an object containing many regexes for testing.
+     * In most cases, the search string has to be at the beginning of the haystack.
+     * Usage:
+     * <pre>     if (regexPool.doctype.test(myString)) ...     </pre>
+     *
+     * This is the fastest way to test if a haystack begins with a string.
+     * There is one exception: if the search string is one character long, use
+     *
+     * <pre>     if (myString[0] === "a") ...                   </pre>
+     */
+    var regexPool = {
+        all_vertical_tabs: /\r/g,       // match \r        (global)
+        first_nw_char_or_endl: /\S|$/,  // match the first non-whitespace character or the end of the string
+        first_nw_char: /\S/,            // match the first non-whitespace character
+        empty_line: /^\s*$/,            // match a string that is empty or contains only whitespace
+        leading_ws: /^\s*/,             // match the whitespace at the beginning of the string
+        one_leading_ws: /^\s?/,         // match 0 or 1 whitespace characters at the beginning of the string
+        trailing_ws: /\s*$/,            // match the whitespace at the end of the string
+        
+        doctype: /^doctype/,            // match doctype
+        doctype_i: /^doctype/i,         // match doctype   (case-insensitive)
+        em_equals: /^!=/,               // match !=
+        em_brace: /^!{/,                // match !{
+        hash_brace: /^#{/,              // match #{
+        comment: /^\/\//,               // match //
+        comment_dash: /^\/\/-/,         // match //-
+        comment_plus_ws: /^\/\/\s*/,    // match // and additional whitespace
+        dot_plus_ws: /^\.\s*/,          // match . and additional whitespace
+        html_node: /^([a-z0-9_-]+)/i,   // match 1 or more node names
+        
+        filter_js: /^:javascript/,      //:javascript
+        filter_js_plus_ws: /^:javascript\s*/,   //:javascript and additional whitespace
+        
+        // match 0 or more node names and 1 or more IDs/classes
+        html_node_with_selectors: /^([a-z0-9_-]*)(([.#][a-z0-9\u00C0-\u024F_-]+)+)/i,
+        
+        //            attr name                   =    "string escaped "|'string escaped '|variable
+        html_attr: /^([a-z0-9\u00C0-\u024F_-]+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[a-z0-9\u00C0-\u024F_-]+)/i,
+        
+        quoted_string: /^(".*?"|'.*?')/,
+        quoted_string_esc: /^("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/,
+        quoted_string_esc_or_var: /^("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[a-z0-9\u00C0-\u024F_]+)/i
+    };
+
 
     //////////////////////////////// HELPER CLASSES ////////////////////////////////
 
@@ -110,6 +159,20 @@ var FastJade = (function() {
         child.parent = this;
         return child;
     };
+    /**
+     * @param {Node|Variable|string} n
+     * @param {int?} indentLength
+     */
+    Node.prototype.addOnlyParent = function (n, indentLength) {
+        var child;
+        if (n.indentLength) {
+            child = n;
+        } else {
+            child = new Node(n, indentLength);
+        }
+        child.parent = this;
+        return child;
+    };
 
     var rootID = new Node(null, -1);
     delete rootID.indentLength;
@@ -145,6 +208,8 @@ var FastJade = (function() {
         this.type = type;
     }
 
+    var contextValidationSecret = Math.random() + "";
+
     function PartsCombinator() {
         /** @type {Array.<Variable>} */
         var res = [];
@@ -178,6 +243,8 @@ var FastJade = (function() {
             for (var i = 0; i < res.length; i++) {
                 el = res[i];
                 switch (el.type) {
+                    case T_EXTEND:
+                        throw new Error("extending is not supported in browsers!");
                     case T_FINAL_STRING:
                         r += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
                         break;
@@ -205,9 +272,6 @@ var FastJade = (function() {
 
     ////////////////////////////////    PROGRAM     ////////////////////////////////
 
-    /**
-     * @param {string} string
-     */
     function _parse(string) {
         var lines = string.replace(/\r/g, "").split("\n");
         var resultTree = Node.makeRoot();
@@ -230,7 +294,7 @@ var FastJade = (function() {
             line = lines[i];
             
             if (isText) {
-                firstNWcharPos = line.search(/\S|$/);
+                firstNWcharPos = line.search(regexPool.first_nw_char_or_endl);
                 if (textIndent === -1) {
                     if (line.length === firstNWcharPos) {
                         continue;
@@ -254,7 +318,7 @@ var FastJade = (function() {
                     line = line.substring(textIndent);
                     lastNode.add(new Variable(line, T_STRING), textIndent);
                     continue;
-                } else if (line.length < textIndent && line.match(/^\s*$/)) {
+                } else if (line.length < textIndent && regexPool.empty_line.test(line)) {
                     // line is too short -> ignored
                     continue;
                 } else {
@@ -263,10 +327,10 @@ var FastJade = (function() {
                 }
             }
             
-            firstNWcharPos = line.search(/\S/);
+            firstNWcharPos = line.search(regexPool.first_nw_char);
             if (firstNWcharPos === -1) continue;
             trimmedLine = line.substring(firstNWcharPos);
-    
+            
             /** @type {Node|undefined} */
             var nextParent;
             for (var tmp_node = lastNode; tmp_node !== undefined; tmp_node = tmp_node.parent) {
@@ -277,32 +341,34 @@ var FastJade = (function() {
             }
             
             if (trimmedLine[0] === "|") {
-                // simple text
+                // pipe (simple text)
                 trimmedLine = trimmedLine.substring(1);
                 if (trimmedLine[0] === " ") trimmedLine = trimmedLine.substring(1);
                 nextParent.add(new Variable(trimmedLine, T_STRING), firstNWcharPos);
             } else if (trimmedLine[0] === "=") {
+                // =
                 nextParent.add(new Variable(trimmedLine.substring(1), T_VARIABLE_JS_ESC), firstNWcharPos);
-            } else if (trimmedLine.substring(0, 2) === "!=") {
+            } else if (regexPool.em_equals.test(trimmedLine)) {
+                // !=
                 nextParent.add(new Variable(trimmedLine.substring(2), T_VARIABLE_JS), firstNWcharPos);
-            } else if (trimmedLine.substring(0, 3) === "//-") {
-                // invisible comment
-            } else if (trimmedLine.substring(0, 2) === "//") {
-                // comment
+            } else if (regexPool.comment_dash.test(trimmedLine)) {
+                // //- (invisible comment)
+            } else if (regexPool.comment.test(trimmedLine)) {
+                // // (html comment)
                 lastNode = nextParent.add(new Variable("//", T_HTML_COMMENT), firstNWcharPos);
-                var commentText = trimmedLine.replace(/^\/\/\s*/, "");
+                var commentText = trimmedLine.replace(regexPool.comment_plus_ws, "");
                 if (commentText !== "") {
                     lastNode.add(new Variable(commentText, T_FINAL_STRING));
                 }
-            } else if (trimmedLine.match(/^doctype\b/i)) {
+            } else if (regexPool.doctype.test(trimmedLine)) {
                 // doctype
-                var parts = trimmedLine.split(" ");
-                if (parts[1]) {
-                    var args = parts[1].trim().toLowerCase();
+                var argsString = trimmedLine.substring(7);
+                if (argsString !== "") {
+                    var args = argsString.replace(/^s+|s+$/g, "").toLowerCase();
                     if (doctypes[args]) {
                         nextParent.add(new Variable(doctypes[args], T_FINAL_STRING), firstNWcharPos);
                     } else {
-                        nextParent.add(new Variable("<!DOCTYPE " + parts[1].trim() + ">", T_FINAL_STRING), firstNWcharPos);
+                        nextParent.add(new Variable("<!DOCTYPE " + argsString.replace(/^s+|s+$/g, "") + ">", T_FINAL_STRING), firstNWcharPos);
                     }
                 } else {
                     nextParent.add(new Variable(doctypes["default"], T_FINAL_STRING), firstNWcharPos);
@@ -311,16 +377,16 @@ var FastJade = (function() {
                 // javascript
                 trimmedLine = trimmedLine.substring(1);
                 lastNode = nextParent.add(new Variable(trimmedLine, T_INJECTED_JS), firstNWcharPos);
-            } else if (trimmedLine.match(/^:javascript/)) {
+            } else if (regexPool.filter_js.test(trimmedLine)) {
                 // javascript element
-                trimmedLine = trimmedLine.replace(/^:javascript\s+/, "");
+                trimmedLine = trimmedLine.replace(regexPool.filter_js_plus_ws, "");
                 lastNode = nextParent.add(new Variable({
                     nodeName: "script",
                     args: "type=\"text/javascript\""
                 }, T_HTML_NODE), firstNWcharPos);
                 isText = true;
-                lastIndent = firstNWcharPos;
                 textIndent = -1;
+                lastIndent = firstNWcharPos;
             } else {
                 // html element
                 
@@ -331,32 +397,28 @@ var FastJade = (function() {
                     var nodeElem = parseNodeString(node);
                     var text = trimmedLine.substring(node.length);
                     
-                    if (text.match(/^=/)) {
+                    if (text[0] === "=") {
                         lastNode = nextParent.add(nodeElem, firstNWcharPos);
                         lastNode.add(new Variable(text.substring(1), T_VARIABLE_JS_ESC), 0);
-                    } else if (text.match(/^!=/)) {
+                    } else if (regexPool.em_equals.test(text)) {
+                        // !=
                         lastNode = nextParent.add(nodeElem, firstNWcharPos);
                         lastNode.add(new Variable(text.substring(2), T_VARIABLE_JS), 0);
-                    } else if (text.match(/^\./)) {
+                    } else if (text[0] === ".") {
                         isText = true;
                         textIndent = -1;
                         lastIndent = firstNWcharPos;
                         lastNode = nextParent.add(nodeElem, firstNWcharPos);
-                        text = text.replace(/^\.\s*/, "");
+                        text = text.replace(regexPool.dot_plus_ws, "");
                         if (text !== "") lastNode.add(new Variable(text, T_STRING), 0);
                     } else {
                         lastNode = nextParent.add(nodeElem, firstNWcharPos);
                         if (text !== "") {
-                            text = text.replace(/^\s*/, "");
-                            if (text[0]) {
-                                if (text[0] === "=") {
-                                    // assignment
-                                    
-                                } else {
-                                    lastNode.add(new Variable(text, T_STRING), 0);
-                                }
-                            }
-                        } else if (node === "script" || node === "style") {
+                            text = text.replace(regexPool.one_leading_ws, "");
+                            lastNode.add(new Variable(text, T_STRING), 0);
+                        }
+                        
+                        if (node === "script" || node === "style") {
                             isText = true;
                             textIndent = -1;
                             lastIndent = firstNWcharPos;
@@ -394,9 +456,9 @@ var FastJade = (function() {
         nodeName = nodeName.substring(0, nodeNameEnd);
         
         if (nodeName === "") nodeName = "div";
-    
+        
         args = args
-                .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*=([^"' ]+)/g, "!{(typeof $2 === 'undefined') ? '' : '$1=\"' + escapeHtml(objectToCssString($2)) + '\"'}")
+                .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*=([^"' ]+)/g, "#{(typeof $2 === 'undefined') ? '' : '$1=\"' + $2 + '\"'}")
                 .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*="#{(true|false)}"/g, "$1=\"$1\"");
         
         var allArgsArr = [args];
@@ -417,8 +479,8 @@ var FastJade = (function() {
         
         return new Variable({nodeName: nodeName, args: allArgsArr.join(" ")}, T_HTML_NODE);
     }
-    
-    
+
+
     /**
      * @param {SimpleNode} parsedTree
      * @param {PartsCombinator} combinator
@@ -586,33 +648,9 @@ var FastJade = (function() {
 
 
     ////////////////////////////////     MODULE     ////////////////////////////////
-    
-    window.performance = window.performance || {};
-    performance.now = (function () {
-        // noinspection JSUnresolvedVariable
-        return performance.now || performance.mozNow || performance.msNow ||
-                performance.oNow || performance.webkitNow || Date.now
-    })();
-    
-    var compiledFuncs = {};
 
-    function compileToString(str) {
-        if (!str) throw new Error("No string was given for compilation");
-        var combinator = new PartsCombinator();
-        makeParts(_parse(str), combinator, false, true);
-        return combinator.createFunction();
-    }
-
-    function compile(str, name) {
-        // check if a precompiled/cached version is available
-        if (name && compiledFuncs[name]) {
-            return compiledFuncs[name];
-        }
-        
-        if (!str) {
-            if (name) throw new Error("Template '" + name + "' doesn't exist");
-            else throw new Error("No string was given for compilation")
-        }
+    function compile(str) {
+        if (!str && str !== "") throw new Error("No string was given for compilation");
         
         var combinator = new PartsCombinator();
         makeParts(_parse(str), combinator, false, true);
@@ -623,13 +661,7 @@ var FastJade = (function() {
             throw new Error("Invalid javascript in Jade template (" + e + ")");
         }
         // noinspection JSUnresolvedVariable
-        var func = anonymous;
-        
-        if (name) {
-            // cache the result
-            compiledFuncs[name] = func;
-        }
-        return func;
+        return anonymous;
     }
 
     function parse(templateFunc, context) {
@@ -637,24 +669,9 @@ var FastJade = (function() {
         return templateFunc(context);
     }
 
-    function parseFromString(templateFunc, context) {
-        var res;
-        try {
-            eval(templateFunc);
-            // noinspection JSUnresolvedFunction
-            res = anonymous(context);
-        } catch (e) {
-            throw new Error("Invalid javascript in Jade template (" + e + ")");
-        }
-        if (res === undefined) throw new Error("Invalid fastjade return value");
-        return res;
-    }
-
     return {
         compile: compile,
-        compileToString: compileToString,
         parse: parse,
-        parseFromString: parseFromString,
         escapeHtml: escapeHtml,
         addSlashes: addSlashes,
         objectToCssString: objectToCssString
