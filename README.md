@@ -91,7 +91,7 @@ var html = FastJade.parse("index", {
   title: "Home"
 });
 
-// Yo can use it in Express.js:
+// You can use it in Express.js:
 app.use('/help', function(req, res) {
   res.send(FastJade.parse("help", {
     title: "Help"
@@ -102,13 +102,14 @@ app.use('/help', function(req, res) {
 
 ## Browser version
 
-fastjade can run in the browser, too. The usage is easy:
+fastjade can run in the browser, too:
 
 ```html
 <!-- at the end of the body: -->
 <script type="text/javascript" src="fastjade-browser.js"></script>
 <script>
-    var text = "doctype\nhtml\n" +
+    var text = "doctype\n" +
+               "html\n" +
                "  head\n" +
                "    title Hello World!\n" +
                "  body\n" +
