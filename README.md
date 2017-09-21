@@ -60,33 +60,40 @@ Executing it results in the following HTML document:
 
 ## Installation
 
-This project is not yet available on npm. However, you can install it by copying the file `fastjade.js` onto your server and including it in your file:
+This project is not yet available on npm. However, you can install it by copying the files `fastjade.js` and `fastjadec.js` onto your server and including it in your file.
+
+Note that `fastjade.js` can only operate on *strings* while `fastjadec.js` offers an interface for template *files*.
 
 ```javascript
-var fastJade = require('./fastjade.js');
+var FastJade = require('./fastjadec.js'); // only fastjadec.js is required!
 ```
 
 Then you can use it:
 
 ```javascript
-// Pre-compile all files in a directory to access them later:
-fastJade.compileDirectory('jade-views');
+// Set the directory where your templates are:
+FastJade.setHomeDirectory('my-templates');
 
-// Or pre-compile a string and cache it with the name "index".
-// The next time a string with the same name is compiled,
-// The existing template function is used instead.
-fastJade.compile("!!! 5\nhtml\n  head", "index");
+// Pre-compile all files in the templates directory:
+FastJade.compileDirectory('/');
 
-// Parse a pre-compiled string:
-// The second argument is an object with values that can be
-// accessed in the template.
-var html = fastJade.parse("index", {
+// You can pass a callback to the function:
+// if the second parameter is true, the folder is searched recursively.
+// this is enabled by default.
+FastJade.compileDirectory('/', true, function (num, failed) {
+    console.log("COMPILED " + num + " FILES (" +
+            (num - failed) + " successful, " + failed + " failed)");
+});
+
+// Parse a pre-compiled file. The second argument is an object
+// with values that are usable in the template.
+var html = FastJade.parse("index", {
   title: "Home"
 });
 
-// Use it in express.js:
+// Yo can use it in Express.js:
 app.use('/help', function(req, res) {
-  res.send(fastJade.parse("index", {
+  res.send(FastJade.parse("help", {
     title: "Help"
   }));
 });
