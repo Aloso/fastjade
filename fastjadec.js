@@ -1,5 +1,22 @@
 var fs = require('fs');
 var path = require("path");
+
+
+
+module.exports = {
+    setHomeDirectory: setHomeDirectory,
+    compile: compileFile,
+    compileDirectory: compileDirectory,
+    compileString: function (str, callback) {
+        FastJade.compile(str, callback);
+    },
+    isCompiled: isCompiled,
+    parse: parse,
+    compileAndParse: compileAndParse,
+    compileAndParseString: compileAndParseString,
+    getCompiled: getCompiled
+};
+
 var FastJade = require('./fastjade.js');
 
 var compiledFuncs = {};
@@ -83,12 +100,15 @@ function compileDirectory(directory, recursive, callback) {
     
     readFiles(targetDir, recursive, counter, function (filename, content) {
         if (/\.jade$/.test(filename)) {
-            var fn = FastJade.compile(content);
-            var newName = path.relative(homeDir, filename).replace(/\\/g, "/").replace(/\.jade$/, "");
-            compiledFuncs[newName] = fn;
-            if (counter.balance === 0 && callback) {
-                callback(counter.finalNum, counter.failed);
-            }
+            FastJade.compile(content, function (fn) {
+                if (!(fn instanceof Error)) {
+                    var newName = path.relative(homeDir, filename).replace(/\\/g, "/").replace(/\.jade$/, "");
+                    compiledFuncs[newName] = fn;
+                    if (counter.balance === 0 && callback) {
+                        callback(counter.finalNum, counter.failed);
+                    }
+                }
+            });
         }
     }, function (err) {
         if (counter.balance === 0) {
@@ -100,7 +120,7 @@ function compileDirectory(directory, recursive, callback) {
 
 /**
  * @param {string} file
- * @param {function(boolean, function(Object)?)?} callback
+ * @param {function(function|Error)?} callback
  */
 function compileFile(file, callback) {
     if (!/\.jade$/.test(file)) file += ".jade";
@@ -108,23 +128,20 @@ function compileFile(file, callback) {
     var newName = path.relative(homeDir, targetFile).replace(/\\/g, "/").replace(/\.jade$/, "");
     if (compiledFuncs[newName]) {
         if (callback) callback(compiledFuncs[newName]);
-        else return compiledFuncs[newName];
     }
     
     fs.readFile(targetFile, 'utf-8', function(err, content) {
         if (err) {
-            if (callback) callback(false);
+            if (callback) callback(err);
             return;
         }
         
-        var res = FastJade.compile(content, newName);
-        compiledFuncs[newName] = res;
-        
-        if (callback) {
-            callback(true, res);
-        } else {
-            FastJade.compile(content, newName);
-        }
+        FastJade.compile(content, function (b) {
+            if (b) {
+                compiledFuncs[newName] = b;
+            }
+            if (callback) callback(b);
+        });
     });
 }
 
@@ -135,6 +152,11 @@ function isCompiled(file) {
     return !!compiledFuncs[newName];
 }
 
+/**
+ * @param {string|function} file
+ * @param {Object} context
+ * @return {string|Error}
+ */
 function parse(file, context) {
     if (typeof file === "function") {
         return FastJade.parse(file, context);
@@ -151,23 +173,50 @@ function parse(file, context) {
     }
 }
 
-function compileAndParse(file, callback) {
-    
+/**
+ * @param {string} file
+ * @param {Object} context
+ * @param {function} callback
+ * @return {*}
+ */
+function compileAndParse(file, context, callback) {
+    if (typeof file === "function") {
+        return parse(file, callback);
+    }
+    compileFile(file, function (b) {
+        if (b) {
+            callback(parse(file, context));
+        } else if (callback) {
+            callback(false);
+        } else {
+            return false;
+        }
+    });
 }
 
-function compileAndParseString(str) {
-    return FastJade.parse(FastJade.compile(str));
+/**
+ * @param {string} str
+ * @param {Object?} context
+ * @param {function?} callback
+ * @return {undefined}
+ */
+function compileAndParseString(str, context, callback) {
+    FastJade.compile(str, function (b) {
+        if (!(b instanceof Error)) {
+            if (callback) callback(FastJade.parse(b, context));
+        } else {
+            if (callback) callback(b);
+        }
+    });
 }
 
-module.exports = {
-    setHomeDirectory: setHomeDirectory,
-    compile: compileFile,
-    compileDirectory: compileDirectory,
-    compileString: function (str) {
-        return FastJade.compile(str);
-    },
-    isCompiled: isCompiled,
-    parse: parse,
-    compileAndParse: compileAndParse,
-    compileAndParseString: compileAndParseString
-};
+/**
+ * @param {string} file
+ * @return {function|undefined}
+ */
+function getCompiled(file) {
+    if (!/\.jade$/.test(file)) file += ".jade";
+    var targetFile = path.join(homeDir, file);
+    var newName = path.relative(homeDir, targetFile).replace(/\\/g, "/").replace(/\.jade$/, "");
+    return compiledFuncs[newName];
+}

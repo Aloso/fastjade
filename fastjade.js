@@ -209,14 +209,16 @@ function Variable(string, type) {
     this.type = type;
 }
 
-var contextValidationSecret = Math.random() + "";
-
 function PartsCombinator() {
     /** @type {Array.<Variable>} */
     var res = [];
     var last = null;
     var lastType = -1;
     
+    /**
+     * @param {*} val
+     * @param {int} type
+     */
     this.add = function (val, type) {
         if (type === lastType && lastType === T_FINAL_STRING) {
             last.val += val;
@@ -232,69 +234,10 @@ function PartsCombinator() {
             this.add(valArr[i].val, valArr[i].type);
         }
     };
-    /**
-     * Convert the parts into a STRING containing a function.
-     * This STRING will then be converted to a function using eval()
-     */
-    this.createFunction = function () {
-        var extend = null;
-        var ready = true;
-        
-        var r = "function anonymous(context) {\n" +
-                "  if (!contextValidationSecret || contextValidationSecret !== '" + contextValidationSecret + "') {" +
-                "    throw new Error('Template function executed in wrong file')" +
-                "  }" +
-                "  with (context || {}) {\n" +
-                "    var _ = \"\";\n";
-        var el, x;
-        for (var i = 0; i < res.length; i++) {
-            el = res[i];
-            switch (el.type) {
-                case T_EXTEND:
-                    if (extend === null) {
-                        extend = el.val;
-                        if (!FastJadeC.isCompiled(el.val)) {
-                            ready = false;
-                            FastJadeC.compile(el.val, function (success, fn) {
-                                if (success) {
-                                    ready = true;
-                                    extend = fn.toString();
-                                } else {
-                                    ready = true;
-                                    extend = null;
-                                }
-                            });
-                        } else {
-                        
-                        }
-                    }
-                    break;
-                case T_FINAL_STRING:
-                    r += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
-                    break;
-                case T_VARIABLE_JS_ESC:
-                    x = el.val;
-                    r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
-                    break;
-                case T_VARIABLE_JS:
-                    x = el.val;
-                    r += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : " + x + ";\n";
-                    break;
-                case T_INJECTED_JS:
-                    r += "    " + el.val + "\n";
-                    break;
-            }
-        }
-        while (!ready) {}
-        if (extend !== null) {
-            r += "    _ += (" + extend + ")(context);";
-        }
-        
-        r += "    return _;\n";
-        r += "  }\n";
-        r += "}";
-        return r;
-    };
+    /** @return {Array.<Variable>} */
+    this.getResult = function () {
+        return res;
+    }
 }
 
 
@@ -440,13 +383,16 @@ function _parse(string) {
                     lastNode = nextParent.add(nodeElem, firstNWcharPos);
                     text = text.replace(regexPool.dot_plus_ws, "");
                     if (text !== "") lastNode.add(new Variable(text, T_STRING), 0);
+                } else if (node === "include") {
+                    text = text.replace(regexPool.leading_ws, "");
+                    lastNode = nextParent.add(new Variable(text, T_INCLUDE), firstNWcharPos);
+                } else if (node === "extends") {
+                    // do nothing (yet)
                 } else {
                     lastNode = nextParent.add(nodeElem, firstNWcharPos);
                     if (text !== "") {
                         text = text.replace(regexPool.one_leading_ws, "");
                         lastNode.add(new Variable(text, T_STRING), 0);
-                    } else if (node === "block") {
-                        //
                     }
                     
                     if (node === "script" || node === "style") {
@@ -623,6 +569,9 @@ function makeParts(parsedTree, combinator, isInComment, breakAllStrings) {
                 combinator.add(content.val, T_INJECTED_JS);
             }
             return;
+        case T_INCLUDE:
+            combinator.add(content.val, T_INCLUDE);
+            return;
         default:
             throw new Error("Internal error: Invalid node type " + content.type);
     }
@@ -677,26 +626,129 @@ function stringSplitter(string) {
 }
 
 
+/**
+ * @param {Array.<Variable>} parts
+ * @param {int} startIndex
+ * @param {string|boolean} res
+ * @param extend
+ * @param {function(string|Error)} callback
+ */
+function createFunction(parts, startIndex, res, extend, callback) {
+    res || (res =
+            "function anonymous(context) {\n" +
+            "  with (context || {}) {\n" +
+            "    var _ = \"\";\n");
+    
+    var el, x;
+    for (var i = startIndex; i < parts.length; i++) {
+        el = parts[i];
+        switch (el.type) {
+            case T_EXTEND:
+                callback(new Error("extending is not supported yet."));
+                return;
+                /*
+                if (extend === null) {
+                    extend = el.val;
+                    if (!FastJadeC.isCompiled(el.val)) {
+                        ready = false;
+                        FastJadeC.compile(el.val, function (success, fn) {
+                            if (success) {
+                                ready = true;
+                                extend = fn.toString();
+                            } else {
+                                ready = true;
+                                extend = null;
+                            }
+                        });
+                    } else {
+                    
+                    }
+                }
+                */
+                break;
+            case T_FINAL_STRING:
+                res += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
+                break;
+            case T_VARIABLE_JS_ESC:
+                x = el.val;
+                res += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
+                break;
+            case T_VARIABLE_JS:
+                x = el.val;
+                res += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : " + x + ";\n";
+                break;
+            case T_INJECTED_JS:
+                res += "    " + el.val + "\n";
+                break;
+            case T_INCLUDE:
+                if (!FastJadeC.isCompiled(el.val)) {
+                    FastJadeC.compile(el.val, function (b) {
+                        if (b) {
+                            // noinspection JSReferencingMutableVariableFromClosure
+                            res += "    _ += (" + FastJadeC.getCompiled(el.val).toString() + ")(context);\n";
+                            // noinspection JSReferencingMutableVariableFromClosure
+                            createFunction(parts, i + 1, res, extend, callback);
+                        } else {
+                            // noinspection JSReferencingMutableVariableFromClosure
+                            createFunction(parts, i + 1, res, extend, callback);
+                        }
+                    });
+                    return;
+                } else {
+                    res += "    _ += (" + FastJadeC.getCompiled(el.val).toString() + ")(context);\n";
+                }
+                break;
+            default:
+                callback(new Error("Invalid node type " + el.type));
+                return;
+        }
+    }
+    if (extend !== null) {
+        res += "    return (" + extend + ")(context);\n";
+        res += "  }\n";
+        res += "}";
+        callback(res);
+    } else {
+        res += "    return _;\n";
+        res += "  }\n";
+        res += "}";
+        callback(res);
+    }
+}
+
 
 ////////////////////////////////     MODULE     ////////////////////////////////
 
-function compile(str) {
+/**
+ * @param {string} str
+ * @param {function(function|Error)} callback
+ * @return {null}
+ */
+function compile(str, callback) {
     if (!str && str !== "") throw new Error("No string was given for compilation");
     
     var combinator = new PartsCombinator();
     makeParts(_parse(str), combinator, false, true);
-    var res = combinator.createFunction();
-    try {
-        eval(res);
-    } catch (e) {
-        throw new Error("Invalid javascript in Jade template (" + e + ")");
-    }
-    // noinspection JSUnresolvedVariable
-    return anonymous;
+    var parts = combinator.getResult();
+    createFunction(parts, 0, false, null, function (string) {
+        try {
+            eval(string);
+            if (callback) {
+                // noinspection JSUnresolvedVariable
+                callback(anonymous);
+            }
+        } catch (e) {
+            if (callback) callback(new Error("Invalid javascript in Jade template (" + e + ")"));
+        }
+    });
 }
 
+/**
+ * @param {function(Object)} templateFunc
+ * @param {Object} context
+ * @return {string|Error}
+ */
 function parse(templateFunc, context) {
-    if (typeof templateFunc === "string") templateFunc = compile(null, templateFunc);
     return templateFunc(context);
 }
 
