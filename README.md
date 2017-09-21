@@ -128,6 +128,7 @@ fastjade can run in the browser, too:
 
 ## Not supported yet
 
+  * Proper indentation in the output (although this doesn't affect the html document in most cases)
   * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
   * Style attributes as JSON are supported, but not inline:
     ```jade
