@@ -120,7 +120,7 @@ fastjade can run in the browser, too:
 
 ## Known issues
 
-  * `extends`, `block`, `mixin` and `include` is not supported yet, but I will add it very soon.
+  * `extends`, `block` and `mixin` are not supported yet, but I will add it very soon. `include` works partially -- `.jade` files can be included, but no other file types.
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work (yet), but can be realized with actual javascript
   * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
   * Invisible comments (`//-`) can't have children - only the exact line is commented out.
