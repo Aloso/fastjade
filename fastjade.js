@@ -41,16 +41,19 @@ var doctypes = {
 };
 
 // Constants
-var T_STRING = 0,
-    T_FINAL_STRING = 1,
-    T_HTML_NODE = 2,
-    T_HTML_COMMENT = 3,
-    T_VARIABLE_JS = 4,
-    T_VARIABLE_JS_ESC = 5,
-    T_INJECTED_JS = 6,
-    T_INCLUDE = 7,
-    T_EXTEND = 8,
-    T_BLOCK = 9;
+var N_ROOT = 1,
+    N_COMMENT = 2,
+    N_HTML = 3,
+    N_HTML_COMMENT = 4,
+    N_FILTER = 5,
+    N_TEXT = 6,
+    N_TEXT_WITH_INJECTIONS = 7,
+    N_JS_LINE = 8,
+    N_JS_EXPR = 9,
+    N_JS_EXPR_ESC = 10,
+    N_ARRAY = 11,
+    N_INCLUDE = 12,
+    N_EXTEND = 13;
 
 function addSlashes(string) {
     return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -96,6 +99,9 @@ var regexPool = {
     leading_ws: /^\s*/,             // match the whitespace at the beginning of the string
     one_leading_ws: /^\s?/,         // match 0 or 1 whitespace characters at the beginning of the string
     trailing_ws: /\s*$/,            // match the whitespace at the end of the string
+    trim: /^\s+|\s+$/,              // match all leading and trailing whitespace
+    first_ws: /\s/,                 // match first whitespace character
+    
     
     doctype: /^doctype/,            // match doctype
     doctype_i: /^doctype/i,         // match doctype   (case-insensitive)
@@ -106,13 +112,16 @@ var regexPool = {
     comment_dash: /^\/\/-/,         // match //-
     comment_plus_ws: /^\/\/\s*/,    // match // and additional whitespace
     dot_plus_ws: /^\.\s*/,          // match . and additional whitespace
-    html_node: /^([a-z0-9_-]+)/i,   // match 1 or more node names
+    modifiers: /^(\.|!=|=)/,        // match . and != and =
+    include: /^include\b/,          // match include
     
     filter_js: /^:javascript/,      //:javascript
     filter_js_plus_ws: /^:javascript\s*/,   //:javascript and additional whitespace
     
+    // match 1 or more node names and 0 or more IDs/classes
+    html_node_with_selectors:     /^([a-z0-9_-]+)(([.#][a-z0-9\u00C0-\u024F_-]+)*)/i,
     // match 0 or more node names and 1 or more IDs/classes
-    html_node_with_selectors: /^([a-z0-9_-]*)(([.#][a-z0-9\u00C0-\u024F_-]+)+)/i,
+    html_node_opt_with_selectors: /^([a-z0-9_-]*)(([.#][a-z0-9\u00C0-\u024F_-]+)+)/i,
     
     //            attr name                   =    "string escaped "|'string escaped '|variable
     html_attr: /^([a-z0-9\u00C0-\u024F_-]+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[a-z0-9\u00C0-\u024F_-]+)/i,
@@ -125,91 +134,14 @@ var regexPool = {
 
 //////////////////////////////// HELPER CLASSES ////////////////////////////////
 
-/**
- * @typedef {{
- *      content: Variable,
- *      children: Array.<SimpleNode>
- * }} SimpleNode
- */
-
-/**
- * @param {?} content
- * @param {int} indentLength
- * @param {Node?} parent
- * @constructor
- */
-function Node(content, indentLength, parent) {
-    this.content = content;
-    this.indentLength = indentLength;
-    this.children = [];
-    this.parent = parent;
-}
-
-/**
- * @param {Node|Variable|string} n
- * @param {int?} indentLength
- */
-Node.prototype.add = function (n, indentLength) {
-    var child;
-    if (n.indentLength) {
-        child = n;
-    } else {
-        child = new Node(n, indentLength);
-    }
-    this.children.push(child);
-    child.parent = this;
-    return child;
-};
-/**
- * @param {Node|Variable|string} n
- * @param {int?} indentLength
- */
-Node.prototype.addOnlyParent = function (n, indentLength) {
-    var child;
-    if (n.indentLength) {
-        child = n;
-    } else {
-        child = new Node(n, indentLength);
-    }
-    child.parent = this;
-    return child;
-};
-
-var rootID = new Node(null, -1);
-delete rootID.indentLength;
-delete rootID.content;
-delete rootID.parent;
-
-Node.makeRoot = function () {
-    var r = new Node(null, -1);
-    r.parent = rootID;
-    rootID.children.push(r);
-    return r;
-};
-Node.prototype.isRoot = function () {
-    return this.parent === rootID;
-};
-Node.prototype.isInTree = function () {
-    if (this === rootID) return false;
-    return this.isRoot() || this.parent.isInTree();
-};
-
-/** @return {SimpleNode} */
-Node.prototype.simplify = function () {
-    var n = {content: this.content, children: []};
-    for (var i = 0; i < this.children.length; i++) {
-        n.children.push(this.children[i].simplify());
-    }
-    if (n.children.length === 0) delete n.children;
-    return n;
-};
-
 function Variable(string, type) {
     this.val = string;
     this.type = type;
 }
 
 function PartsCombinator() {
+    "use strict";
+    
     /** @type {Array.<Variable>} */
     var res = [];
     var last = null;
@@ -220,9 +152,9 @@ function PartsCombinator() {
      * @param {int} type
      */
     this.add = function (val, type) {
-        if (type === lastType && lastType === T_FINAL_STRING) {
+        if (type === lastType && lastType === N_TEXT) {
             last.val += val;
-        } else if (type !== T_FINAL_STRING || val !== "") {
+        } else if (type !== N_TEXT || val !== "") {
             last = new Variable(val, type);
             lastType = type;
             res.push(last);
@@ -240,349 +172,610 @@ function PartsCombinator() {
     }
 }
 
+/**
+ * @typedef {{
+ *       type: (int),
+ *       text: (string)?,
+ *       indentWidth: (int)?,
+ *       isText: (boolean)?,
+ *       items: (boolean)?,
+ *       children: (Node[])?,
+ *       lineNumber: (int)?
+ * }} Node
+ */
+
+/**
+ * @typedef {{
+ *      isEmpty: (boolean),
+ *      level: (int)?,
+ *      width: (int)?,
+ *      parent: (Node)?,
+ *      parentWidth: (int)?
+ * }} Indent
+ */
+
+/** @constructor */
+function IndentOrganizer() {
+    "use strict";
+    
+    /** @type {Array.<[int, Node]>} */
+    var activeIndents = [];
+    /** @type {int} */
+    var currentIndex = -1;
+    
+    /**
+     * @param {string} str
+     * @return {Indent}
+     */
+    this.findParent = function (str) {
+        var abs = str.search(regexPool.first_nw_char_or_endl);
+        if (abs === str.length) return {
+            isEmpty: true
+        };
+        
+        var tuple;
+        for (var tupleID = currentIndex; tupleID >= 0; tupleID--) {
+            tuple = activeIndents[tupleID];
+            if (abs > tuple[0]) return {
+                isEmpty: false,
+                level: tupleID,
+                width: abs,
+                parent: tuple[1],
+                parentWidth: tuple[0]
+            };
+        }
+        return {
+            isEmpty: false,
+            level: -1,
+            width: abs
+        };
+    };
+    /**
+     * @param {Indent} indent
+     * @param {boolean} addChild
+     * @param {Node|object} obj
+     */
+    this.addNode = function (indent, addChild, obj) {
+        currentIndex = indent.level + 1;
+        activeIndents[currentIndex] = [indent.width, obj];
+        if (addChild) indent.parent.children.push(obj);
+    };
+    /** @param {Node} child */
+    this.addToLast = function (child) {
+        activeIndents[currentIndex][1].children.push(child);
+    };
+}
+
+var filter = {
+    "javascript": function (text) {
+        return {
+            type: N_HTML,
+            nodeName: "script",
+            attr: {type: N_TEXT, text: " type=\"text/javascript\""},
+            children: [{
+                type: N_TEXT,
+                text: "\n// <![CDATA[\n" + text + "\n// ]]>\n"
+            }]
+        };
+    }
+    /*
+    +-------------------------------------------------+
+    |       MARKDOWN is an experimental feature.      |
+    |   Since it does not work yet, it is disabled.   |
+    +-------------------------------------------------+
+    
+    "markdown": function (text) {
+        var lines = text.split("\n");
+        var output = "";
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line[0] === "#") {
+                var match = line.match(/^(#{1,6})[ ]?/);
+                var hashTagLen = match[1].length;
+                var replaceLen = match[0].length;
+                output += "<h" + hashTagLen + ">" + line.substring(replaceLen) + "</h" + hashTagLen + ">\n";
+            } else if (/\s{0,3}\* /.test(line)) {
+                var starPos = line.indexOf("*");
+                output += "<ul><li>" + line.substring(starPos + 1) + "</li></ul>\n";
+            } else {
+                output += line + "\n";
+            }
+        }
+        return {
+            type: N_TEXT,
+            text: output
+        };
+    }
+    */
+};
 
 
 ////////////////////////////////    PROGRAM     ////////////////////////////////
 
+/**
+ * @param {string} string
+ * @return {Node}
+ */
 function _parse(string) {
+    "use strict";
+    
     var lines = string.replace(/\r/g, "").split("\n");
-    var resultTree = Node.makeRoot();
     
-    /** @type {string} */
-    var line, trimmedLine;
-    /** @type {Node} */
-    var lastNode = resultTree;
-    /** @type {boolean} */
-    var isText = false;
-    /** @type {int} */
-    var lastIndent = -1, textIndent = -1;
-    /** @type {int} */
-    var firstNWcharPos;
+    var rootNode = {type: N_ROOT, children: []};
     
-    //               tag          classes/IDs                     (    key                         =   value                                             )
-    var nodeRegex = /[a-z0-9_-]*([.#][a-z0-9_\u00C0-\u024F-]+)*(\(\s*([a-z0-9_\u00C0-\u024F-]+\s*(=\s*("[^"]*?"|'[^']*?'|[a-z0-9_\u00C0-\u024F-])\s*)?)*\))?/i;
+    /** @type {string} */          var line, trimmedLine;
+    /** @type {IndentOrganizer} */ var indentOrg = new IndentOrganizer();
+    /** @type {Indent} */          var indent;
     
     for (var i = 0; i < lines.length; i++) {
         line = lines[i];
         
-        if (isText) {
-            firstNWcharPos = line.search(regexPool.first_nw_char_or_endl);
-            if (textIndent === -1) {
-                if (line.length === firstNWcharPos) {
-                    continue;
-                }
-                // first line in text block
-                if (firstNWcharPos > lastIndent) {
-                    // define indent for text block
-                    textIndent = firstNWcharPos;
-                    line = line.substring(textIndent);
-                    lastNode.add(new Variable(line, T_STRING), textIndent);
-                } else {
-                    // indent too short; text block is empty
-                    isText = false;
-                }
-                continue;
-            } else if (firstNWcharPos >= textIndent) {
-                if (line.length === firstNWcharPos) {
-                    continue;
-                }
-                // line is part of text block
-                line = line.substring(textIndent);
-                lastNode.add(new Variable(line, T_STRING), textIndent);
-                continue;
-            } else if (line.length < textIndent && regexPool.empty_line.test(line)) {
-                // line is too short -> ignored
-                continue;
+        indent = indentOrg.findParent(line);
+        if (indent.isEmpty) continue;
+        trimmedLine = line.substring(indent.width);
+        if (indent.parent === undefined) indent.parent = rootNode;
+        
+        if (indent.parent.isText) {
+            var pType = indent.parent.type;
+            if (!indent.parent.indentWidth) {
+                indent.parent.indentWidth = indent.width;
             } else {
-                // indent too short; line is not part of text block
-                isText = false;
+                trimmedLine = line.substring(Math.min(indent.parent.indentWidth, indent.width));
             }
-        }
-        
-        firstNWcharPos = line.search(regexPool.first_nw_char);
-        if (firstNWcharPos === -1) continue;
-        trimmedLine = line.substring(firstNWcharPos);
-        
-        /** @type {Node|undefined} */
-        var nextParent;
-        for (var tmp_node = lastNode; tmp_node !== undefined; tmp_node = tmp_node.parent) {
-            if (tmp_node.indentLength < firstNWcharPos) {
-                nextParent = tmp_node;
-                break;
-            }
-        }
-        
-        if (trimmedLine[0] === "|") {
+            indent.parent.children.push({
+                type: (pType === N_HTML_COMMENT || pType === N_COMMENT) ? N_TEXT :
+                      N_TEXT_WITH_INJECTIONS,
+                text: trimmedLine,
+                children: []
+            })
+        } else if (trimmedLine[0] === "|") {
             // pipe (simple text)
-            trimmedLine = trimmedLine.substring(1);
-            if (trimmedLine[0] === " ") trimmedLine = trimmedLine.substring(1);
-            nextParent.add(new Variable(trimmedLine, T_STRING), firstNWcharPos);
+            trimmedLine = trimmedLine.substring(trimmedLine[1] === " " ? 2 : 1);
+            indentOrg.addNode(indent, true, {
+                type: N_TEXT_WITH_INJECTIONS,
+                text: trimmedLine,
+                children: []
+            });
         } else if (trimmedLine[0] === "=") {
             // =
-            nextParent.add(new Variable(trimmedLine.substring(1), T_VARIABLE_JS_ESC), firstNWcharPos);
+            trimmedLine = trimmedLine.substring(1);
+            indentOrg.addNode(indent, true, {
+                type: N_JS_EXPR_ESC,
+                text: trimmedLine,
+                children: []
+            });
         } else if (regexPool.em_equals.test(trimmedLine)) {
             // !=
-            nextParent.add(new Variable(trimmedLine.substring(2), T_VARIABLE_JS), firstNWcharPos);
+            trimmedLine = trimmedLine.substring(2);
+            indentOrg.addNode(indent, true, {
+                type: N_JS_EXPR,
+                text: trimmedLine,
+                children: []
+            });
         } else if (regexPool.comment_dash.test(trimmedLine)) {
             // //- (invisible comment)
+            indentOrg.addNode(indent, false, {
+                type: N_COMMENT,
+                children: []
+            });
         } else if (regexPool.comment.test(trimmedLine)) {
             // // (html comment)
-            lastNode = nextParent.add(new Variable("//", T_HTML_COMMENT), firstNWcharPos);
-            var commentText = trimmedLine.replace(regexPool.comment_plus_ws, "");
-            if (commentText !== "") {
-                lastNode.add(new Variable(commentText, T_FINAL_STRING));
-            }
+            indentOrg.addNode(indent, true, {
+                type: N_HTML_COMMENT,
+                isText: true,
+                text: trimmedLine.substring(2),
+                children: []
+            });
         } else if (regexPool.doctype.test(trimmedLine)) {
             // doctype
+            var doctype_type = doctypes.default;
             var argsString = trimmedLine.substring(7);
             if (argsString !== "") {
                 var args = argsString.trim().toLowerCase();
                 if (doctypes[args]) {
-                    nextParent.add(new Variable(doctypes[args], T_FINAL_STRING), firstNWcharPos);
+                    doctype_type = doctypes[args];
                 } else {
-                    nextParent.add(new Variable("<!DOCTYPE " + argsString.trim() + ">", T_FINAL_STRING), firstNWcharPos);
+                    doctype_type = "<!DOCTYPE " + argsString.trim() + ">";
                 }
-            } else {
-                nextParent.add(new Variable(doctypes["default"], T_FINAL_STRING), firstNWcharPos);
             }
+            indentOrg.addNode(indent, true, {
+                type: N_TEXT,
+                text: doctype_type,
+                children: []
+            });
         } else if (trimmedLine[0] === "-") {
             // javascript
-            trimmedLine = trimmedLine.substring(1);
-            lastNode = nextParent.add(new Variable(trimmedLine, T_INJECTED_JS), firstNWcharPos);
-        } else if (regexPool.filter_js.test(trimmedLine)) {
-            // javascript element
-            trimmedLine = trimmedLine.replace(regexPool.filter_js_plus_ws, "");
-            lastNode = nextParent.add(new Variable({
-                nodeName: "script",
-                args: "type=\"text/javascript\""
-            }, T_HTML_NODE), firstNWcharPos);
-            isText = true;
-            textIndent = -1;
-            lastIndent = firstNWcharPos;
+            trimmedLine = trimmedLine.substring(trimmedLine[1] === " " ? 2 : 1);
+            indentOrg.addNode(indent, true, {
+                type: N_JS_LINE,
+                text: trimmedLine,
+                children: []
+            });
+        } else if (trimmedLine[0] === ":") {
+            // filter
+            var filterName = "";
+            var filterNameMatch = trimmedLine.match(/^:([a-z0-9_-]+)/);
+            if (filterNameMatch !== null) filterName = filterNameMatch[1];
+            
+            var filterNode = {type: N_FILTER, children: []};
+            indentOrg.addNode(indent, false, filterNode);
+            
+            var tempIndent, ii;
+            
+            if (filter[filterName]) {
+                var res = [];
+                for (ii = i + 1; ii < lines.length; ii++) {
+                    tempIndent = indentOrg.findParent(lines[ii]);
+                    if (tempIndent.isEmpty) {
+                        res.push(lines[ii].substring(filterNode.indentWidth || 1000000000));
+                    } else if (tempIndent.parent === filterNode) {
+                        res.push(lines[ii].substring(filterNode.indentWidth || (filterNode.indentWidth = tempIndent.width)));
+                    } else {
+                        break;
+                    }
+                }
+                i = ii - 1;
+                indentOrg.addNode(indent, true, filter[filterName](res.join("\n")));
+            } else {
+                var LN = i;
+                for (ii = i + 1; ii < lines.length; ii++) {
+                    tempIndent = indentOrg.findParent(lines[ii]);
+                    if (!tempIndent.isEmpty && tempIndent.parent !== filterNode) {
+                        break;
+                    }
+                }
+                i = ii - 1;
+                showError(WARN_COMPILE, "Filter \"" + filterName + "\" is not supported", LN, lines[LN]);
+            }
+        } else if (regexPool.include.test(trimmedLine)) {
+            // include
+            trimmedLine = trimmedLine.substring(7).replace(regexPool.trim, "");
+            indentOrg.addNode(indent, true, {
+                type: N_INCLUDE,
+                text: trimmedLine,
+                children: [],
+                lineNumber: i
+            });
         } else {
             // html element
-            
-            /** @type {Array|string} */
-            var node = trimmedLine.match(nodeRegex);
-            if (node !== null) {
-                node = node[0];
-                var nodeElem = parseNodeString(node);
-                var text = trimmedLine.substring(node.length);
-                
-                if (text[0] === "=") {
-                    lastNode = nextParent.add(nodeElem, firstNWcharPos);
-                    lastNode.add(new Variable(text.substring(1), T_VARIABLE_JS_ESC), 0);
-                } else if (regexPool.em_equals.test(text)) {
-                    // !=
-                    lastNode = nextParent.add(nodeElem, firstNWcharPos);
-                    lastNode.add(new Variable(text.substring(2), T_VARIABLE_JS), 0);
-                } else if (text[0] === ".") {
-                    isText = true;
-                    textIndent = -1;
-                    lastIndent = firstNWcharPos;
-                    lastNode = nextParent.add(nodeElem, firstNWcharPos);
-                    text = text.replace(regexPool.dot_plus_ws, "");
-                    if (text !== "") lastNode.add(new Variable(text, T_STRING), 0);
-                } else if (node === "include") {
-                    text = text.replace(regexPool.leading_ws, "");
-                    lastNode = nextParent.add(new Variable(text, T_INCLUDE), firstNWcharPos);
-                } else if (node === "extends") {
-                    // do nothing (yet)
+            try {
+                var htmlNode = parseNodeString(trimmedLine);
+            } catch (e) {
+                if (e.isCustomWarning) {
+                    showError(WARN_COMPILE, e.message, i, lines[i]);
+                    indentOrg.addNode(indent, false, {
+                        type: N_COMMENT,
+                        isText: true,
+                        children: []
+                    });
+                    continue;
                 } else {
-                    lastNode = nextParent.add(nodeElem, firstNWcharPos);
-                    if (text !== "") {
-                        text = text.replace(regexPool.one_leading_ws, "");
-                        lastNode.add(new Variable(text, T_STRING), 0);
-                    }
-                    
-                    if (node === "script" || node === "style") {
-                        isText = true;
-                        textIndent = -1;
-                        lastIndent = firstNWcharPos;
-                    }
-                    lastIndent = firstNWcharPos;
+                    throw e;
                 }
-            } else {
-                // invalid node name, use text instead
-                nextParent.add(new Variable(trimmedLine, T_STRING), 0);
+            }
+            if (htmlNode.nodeName === null) {
+                indentOrg.addNode(indent, true, {
+                    type: N_TEXT_WITH_INJECTIONS,
+                    text: htmlNode.after
+                });
+            } else switch (htmlNode.mods) {
+                case null:
+                    indentOrg.addNode(indent, true, {
+                        type: N_HTML,
+                        nodeName: htmlNode.nodeName,
+                        attr: {type: N_ARRAY, items: htmlNode.attr},
+                        isText: false,
+                        children: []
+                    });
+                    indentOrg.addToLast({
+                        type: N_TEXT_WITH_INJECTIONS,
+                        text: htmlNode.after
+                    });
+                    break;
+                case ".":
+                    indentOrg.addNode(indent, true, {
+                        type: N_HTML,
+                        nodeName: htmlNode.nodeName,
+                        attr: {type: N_ARRAY, items: htmlNode.attr},
+                        isText: true,
+                        children: []
+                    });
+                    indentOrg.addToLast({
+                        type: N_TEXT_WITH_INJECTIONS,
+                        text: htmlNode.after
+                    });
+                    break;
+                case "=":
+                    indentOrg.addNode(indent, true, {
+                        type: N_HTML,
+                        nodeName: htmlNode.nodeName,
+                        attr: {type: N_ARRAY, items: htmlNode.attr},
+                        isText: false,
+                        children: []
+                    });
+                    indentOrg.addToLast({
+                        type: N_JS_EXPR_ESC,
+                        text: htmlNode.after,
+                        children: []
+                    });
+                    break;
+                case "!=":
+                    indentOrg.addNode(indent, true, {
+                        type: N_HTML,
+                        nodeName: htmlNode.nodeName,
+                        attr: {type: N_ARRAY, items: htmlNode.attr, children: []},
+                        isText: false,
+                        children: []
+                    });
+                    indentOrg.addToLast({
+                        type: N_JS_EXPR,
+                        text: htmlNode.after,
+                        children: []
+                    });
+                    break;
+                default:
+                    indentOrg.addNode(indent, false, {
+                        type: N_COMMENT,
+                        isText: true,
+                        children: []
+                    });
+                    showError(WARN_COMPILE, "Unsupported node mode \"" + htmlNode.mods + "\n", i, lines[i]);
             }
         }
     }
     
-    return resultTree.simplify();
+    return rootNode;
 }
 
+
+/**
+ * @param {string} string - the full line
+ * @return {{nodeName: string|null, attr: string|Node[]|null, mods: string|null, after: string}}
+ */
+function parseNodeString(string) {
+    "use strict";
+    
+    var i;
+    
+    // 1 node name, 0-n css selectors
+    var nodeNameWithSelectors = string.match(regexPool.html_node_with_selectors);
+    if (nodeNameWithSelectors === null) {
+        // 0-1 node names, 1-n css selectors
+        nodeNameWithSelectors = string.match(regexPool.html_node_opt_with_selectors);
+    }
+    if (nodeNameWithSelectors === null) {
+        return {nodeName: null, attr: null, mods: null, after: string};
+    }
+    var nodeName = nodeNameWithSelectors[1];
+    if (nodeName === "") nodeName = "div";
+    var cssAttributes = nodeNameWithSelectors[2];
+    var cssAttributeArr = cssAttributes.replace(/[.#]/g, " $&").split(" ");
+    var rest = string.substring(nodeNameWithSelectors[0].length);
+    
+    var id = null;
+    var classNames = [];
+    for (i = 1; i < cssAttributeArr.length; i++) {
+        var cssAttr = cssAttributeArr[i];
+        if (cssAttr[0] === ".") classNames.push(cssAttr.substring(1));
+        else id = cssAttr.substring(1);
+    }
+    
+    var attributes = [];
+    
+    if (rest[0] === "(") {
+        rest = rest.substring(1);
+        /** @type {{el: (string|Node)?, after: string}|null} */
+        var result;
+        while (true) {
+            result = parseHtmlAttribute(rest);
+            if (result === null) {
+                var e = new Error("Unclosed html attributes");
+                e.isCustomWarning = true;
+                throw e;
+            }
+            rest = result.after;
+            if (result.el === undefined) break;
+            
+            attributes.push(result.el);
+        }
+    }
+    
+    if (id !== null) attributes.push(" id=\"" + id + "\"");
+    if (classNames.length > 0) attributes.push(" class=\"" + classNames.join(" ") + "\"");
+    
+    var modifiers = rest.match(regexPool.modifiers);
+    var mods = null;
+    if (modifiers !== null) {
+        mods = modifiers[0];
+        if (rest[mods.length] === " ") {
+            rest = rest.substring(mods.length + 1);
+        } else {
+            rest = rest.substring(mods.length);
+        }
+    } else if (rest[0] === " ") {
+        rest = rest.substring(1);
+    }
+    
+    return {
+        nodeName: nodeName,
+        attr: attributes,
+        mods: mods,
+        after: rest
+    };
+}
 
 /**
  * @param {string} string
- * @return {Variable}
+ * @return {({el: (string|Node)?, after: string}|null)}
  */
-function parseNodeString(string) {
-    var nodeName = string;
-    var args = "";
-    var parenthesisPos = string.indexOf("(");
-    if (parenthesisPos !== -1) {
-        nodeName = string.substring(0, parenthesisPos);
-        args = string.substring(parenthesisPos + 1);
-        if (args[args.length - 1] === ")") {
-            args = args.substring(0, args.length - 1);
+function parseHtmlAttribute(string) {
+    "use strict";
+    
+    var firstNWS = string.search(regexPool.first_nw_char_or_endl);
+    var trimmed = string.substring(firstNWS);
+    if (trimmed === "") return null;
+    if (trimmed[0] === ")") return {after: trimmed.substring(1)};
+    
+    var attr = trimmed.match(regexPool.html_attr);
+    if (attr !== null) {
+        var key = attr[1];
+        var value = attr[2];
+        var len = attr[0].length;
+        if (value[0] === "\"" || value[0] === "'") {
+            value = value.substring(1, value.length - 1);
+            return {
+                el: " " + key + "=\"" + escapeHtml(value) + "\"",
+                after: string.substring(firstNWS + len)
+            };
+        } else {
+            return {
+                el: /** @type Node */ {
+                    type: N_ARRAY,
+                    items: [
+                        {type: N_TEXT, text: " " + key + "=\""},
+                        {type: N_JS_EXPR_ESC, text: value},
+                        {type: N_TEXT, text: "\""}
+                    ],
+                    children: []
+                },
+                after: string.substring(firstNWS + len)
+            };
         }
-    }
-    var nodeNameEnd = nodeName.search(/\.|#|$/);
-    var cssArgs = nodeName.substring(nodeNameEnd);
-    nodeName = nodeName.substring(0, nodeNameEnd);
-    
-    if (nodeName === "") nodeName = "div";
-    
-    args = args
-            .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*=([^"' ]+)/g, "#{(typeof $2 === 'undefined') ? '' : '$1=\"' + $2 + '\"'}")
-            .replace(/([a-z0-9_\u00C0-\u024F-]+)\s*="#{(true|false)}"/g, "$1=\"$1\"");
-    
-    var allArgsArr = [args];
-    var className = [];
-    
-    if (cssArgs !== "") {
-        var idMatch = cssArgs.match(/#([^\s.#]+)/);
-        if (idMatch !== null) allArgsArr.push("id=\"" + idMatch[1] + "\"");
+    } else {
+        //TODO what about JSON?
         
-        var classMatch = cssArgs.match(/\.([^\s.#]+)/g);
-        if (classMatch !== null) {
-            for (var i = 0; i < classMatch.length; i++) {
-                className.push(classMatch[i].substring(1));
-            }
-            allArgsArr.push("class=\"" + className.join(" ") + "\"");
-        }
+        var e = new Error("Invalid html attribute");
+        e.isCustomWarning = true;
+        throw e;
     }
-    
-    return new Variable({nodeName: nodeName, args: allArgsArr.join(" ")}, T_HTML_NODE);
 }
 
 
+
+
 /**
- * @param {SimpleNode} parsedTree
+ * @param {Node} parsedTree
  * @param {PartsCombinator} combinator
- * @param {boolean?} isInComment
  * @param {boolean?} breakAllStrings
  */
-function makeParts(parsedTree, combinator, isInComment, breakAllStrings) {
-    var content = parsedTree.content;
+function makeParts(parsedTree, combinator, breakAllStrings) {
+    "use strict";
+    
+    var content = parsedTree;
     var children = parsedTree.children || [];
     
     var i;
     
-    if (content === null) {
-        for (i = 0; i < children.length; i++) {
-            makeParts(children[i], combinator, isInComment, breakAllStrings);
-        }
-    } else switch (content.type) {
-        case T_STRING:
-            combinator.addMany(stringSplitter(content.val));
-            if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
+    switch (content.type) {
+        case N_ROOT:
+            for (i = 0; i < children.length; i++) {
+                makeParts(children[i], combinator, breakAllStrings);
+            }
             return;
-        case T_FINAL_STRING:
-            combinator.add(content.val, T_FINAL_STRING);
-            if (breakAllStrings) combinator.add("\n", T_FINAL_STRING);
+        case N_ARRAY:
+            for (i = 0; i < content.items.length; i++) {
+                var item = content.items[i];
+                if (typeof item === "string") {
+                    combinator.add(item, N_TEXT);
+                } else {
+                    makeParts(item, combinator);
+                }
+            }
             return;
-        case T_HTML_NODE:
-            var nodeNameLC = content.val.nodeName.toLowerCase();
+        case N_TEXT_WITH_INJECTIONS:
+            combinator.addMany(stringSplitter(content.text));
+            if (breakAllStrings) combinator.add("\n", N_TEXT);
+            return;
+        case N_TEXT:
+            combinator.add(content.text, N_TEXT);
+            if (breakAllStrings) combinator.add("\n", N_TEXT);
+            return;
+        case N_HTML:
+            var nodeNameLC = content.nodeName.toLowerCase();
             
             if (selfClosingNodes[nodeNameLC]) {
-                if (content.val.args.length > 0) {
-                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
-                    combinator.addMany(stringSplitter(content.val.args));
-                    combinator.add("/>\n", T_FINAL_STRING);
+                if (content.attr.items && content.attr.items.length > 0) {
+                    combinator.add("<" + nodeNameLC, N_TEXT);
+                    makeParts(content.attr, combinator, false);
+                    combinator.add("/>\n", N_TEXT);
                 } else {
-                    combinator.add("<" + nodeNameLC + "/>\n", T_FINAL_STRING);
+                    combinator.add("<" + nodeNameLC + "/>\n", N_TEXT);
                 }
-            } else if (children.length > 1 || (children[0] && children[0].children)) {
-                if (content.val.args && content.val.args.length > 0) {
-                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
-                    combinator.addMany(stringSplitter(content.val.args));
-                    combinator.add(">\n", T_FINAL_STRING);
+            } else if (children.length > 1 || (children[0] && children[0].children && children[0].children.length > 0)) {
+                if (content.attr.items && content.attr.items.length > 0) {
+                    combinator.add("<" + nodeNameLC, N_TEXT);
+                    makeParts(content.attr, combinator, false);
+                    combinator.add(">", N_TEXT);
                 } else {
-                    combinator.add("<" + nodeNameLC + ">\n", T_FINAL_STRING);
+                    combinator.add("<" + nodeNameLC + ">", N_TEXT);
                 }
                 for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator, isInComment, true);
+                    makeParts(children[i], combinator, true);
                 }
-                combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
+                combinator.add("</" + nodeNameLC + ">\n", N_TEXT);
             } else {
-                if (content.val.args && content.val.args.length > 0) {
-                    combinator.add("<" + nodeNameLC + " ", T_FINAL_STRING);
-                    combinator.addMany(stringSplitter(content.val.args));
-                    combinator.add(">", T_FINAL_STRING);
+                if (content.attr.text) {
+                    combinator.add("<" + nodeNameLC, N_TEXT);
+                    combinator.add(content.attr.text, N_TEXT);
+                    combinator.add(">", N_TEXT);
+                } else if (content.attr.items && content.attr.items.length > 0) {
+                    combinator.add("<" + nodeNameLC, N_TEXT);
+                    makeParts(content.attr, combinator, false);
+                    combinator.add(">", N_TEXT);
                 } else {
-                    combinator.add("<" + nodeNameLC + ">", T_FINAL_STRING);
+                    combinator.add("<" + nodeNameLC + ">", N_TEXT);
                 }
                 for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator, isInComment);
+                    makeParts(children[i], combinator);
                 }
-                combinator.add("</" + nodeNameLC + ">\n", T_FINAL_STRING);
+                combinator.add("</" + nodeNameLC + ">\n", N_TEXT);
             }
             return;
-        case T_HTML_COMMENT:
-            if (!isInComment) {
-                if (children.length > 1) {
-                    combinator.add("<!--\n", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true, true);
-                    }
-                    combinator.add("-->\n", T_FINAL_STRING);
-                } else {
-                    combinator.add("<!-- ", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true);
-                    }
-                    combinator.add(" -->\n", T_FINAL_STRING);
-                }
-            } else {
-                if (children.length > 1) {
-                    combinator.add("/*\n", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true, true);
-                    }
-                    combinator.add("*/\n", T_FINAL_STRING);
-                } else {
-                    combinator.add("/* ", T_FINAL_STRING);
-                    for (i = 0; i < children.length; i++) {
-                        makeParts(children[i], combinator, true);
-                    }
-                    combinator.add(" */\n", T_FINAL_STRING);
-                }
-            }
-            return;
-        case T_VARIABLE_JS:
-        case T_VARIABLE_JS_ESC:
-            combinator.add(content.val, content.type);
-            for (i = 0; i < children.length; i++) {
-                makeParts(children[i], combinator, isInComment);
-            }
-            return;
-        case T_INJECTED_JS:
+        case N_HTML_COMMENT:
+            combinator.add("<!--", N_TEXT);
+            if (content.text !== "") combinator.add(" " + content.text, N_TEXT);
             if (children.length > 0) {
-                combinator.add(content.val + " {", T_INJECTED_JS);
+                combinator.add("\n", N_TEXT);
                 for (i = 0; i < children.length; i++) {
-                    makeParts(children[i], combinator, isInComment);
+                    makeParts(children[i], combinator, true);
                 }
-                combinator.add("}", T_INJECTED_JS);
-            } else {
-                combinator.add(content.val, T_INJECTED_JS);
+            }
+            combinator.add("-->\n", N_TEXT);
+            return;
+        case N_JS_EXPR:
+        case N_JS_EXPR_ESC:
+            combinator.add(content.text, content.type);
+            for (i = 0; i < children.length; i++) {
+                makeParts(children[i], combinator);
             }
             return;
-        case T_INCLUDE:
-            combinator.add(content.val, T_INCLUDE);
+        case N_JS_LINE:
+            if (children.length > 0) {
+                combinator.add(content.text + "\n    {", N_JS_LINE);
+                for (i = 0; i < children.length; i++) {
+                    makeParts(children[i], combinator);
+                }
+                combinator.add("}", N_JS_LINE);
+            } else {
+                combinator.add(content.text, N_JS_LINE);
+            }
+            return;
+        case N_INCLUDE:
+            combinator.add(content.text, N_INCLUDE);
             return;
         default:
-            throw new Error("Internal error: Invalid node type " + content.type);
+            showError(ERROR_INTERNAL, "Invalid node type " + content.type);
+            throw new Error("Invalid node type " + content.type);
     }
 }
-
 
 /**
  * @param {string} string
  * @return {Array.<Variable>}
  */
 function stringSplitter(string) {
+    "use strict";
+    
     var res = [];
     var pos = 0, posBefore, endPos;
     
@@ -591,34 +784,34 @@ function stringSplitter(string) {
         pos = string.indexOf("#{", posBefore);
         if (pos !== -1) {
             if (posBefore !== pos) {
-                res.push(new Variable(string.substring(posBefore, pos), T_FINAL_STRING));
+                res.push(new Variable(string.substring(posBefore, pos), N_TEXT));
             }
             pos += 2;
             endPos = string.indexOf("}", pos);
             if (endPos === -1) {
-                res.push(new Variable(string.substring(pos), T_VARIABLE_JS_ESC));
+                res.push(new Variable(string.substring(pos), N_JS_EXPR_ESC));
                 return res;
             } else {
-                res.push(new Variable(string.substring(pos, endPos), T_VARIABLE_JS_ESC));
+                res.push(new Variable(string.substring(pos, endPos), N_JS_EXPR_ESC));
                 pos = endPos + 1;
             }
         } else {
             pos = string.indexOf("!{", posBefore);
             if (pos !== -1) {
                 if (posBefore !== pos) {
-                    res.push(new Variable(string.substring(posBefore, pos), T_FINAL_STRING));
+                    res.push(new Variable(string.substring(posBefore, pos), N_TEXT));
                 }
                 pos += 2;
                 endPos = string.indexOf("}", pos);
                 if (endPos === -1) {
-                    res.push(new Variable(string.substring(pos), T_VARIABLE_JS));
+                    res.push(new Variable(string.substring(pos), N_JS_EXPR));
                     return res;
                 } else {
-                    res.push(new Variable(string.substring(pos, endPos), T_VARIABLE_JS));
+                    res.push(new Variable(string.substring(pos, endPos), N_JS_EXPR));
                     pos = endPos + 1;
                 }
             } else {
-                res.push(new Variable(string.substring(posBefore), T_FINAL_STRING));
+                res.push(new Variable(string.substring(posBefore), N_TEXT));
                 return res;
             }
         }
@@ -627,25 +820,22 @@ function stringSplitter(string) {
 
 
 /**
- * @param {Array.<Variable>} parts
- * @param {int} startIndex
- * @param {string|boolean} res
- * @param extend
- * @param {function(string|Error)} callback
+ * @param {Variable[]} parts
+ * @param {(string|null)?} extend
  */
-function createFunction(parts, startIndex, res, extend, callback) {
-    res || (res =
-            "function anonymous(context) {\n" +
+function createFunction(parts, extend) {
+    "use strict";
+    
+    var res = "function anonymous(context) {\n" +
             "  with (context || {}) {\n" +
-            "    var _ = \"\";\n");
+            "    var _ = \"\";\n";
     
     var el, x;
-    for (var i = startIndex; i < parts.length; i++) {
+    for (var i = 0; i < parts.length; i++) {
         el = parts[i];
         switch (el.type) {
-            case T_EXTEND:
-                callback(new Error("extending is not supported yet."));
-                return;
+            case N_EXTEND:
+                return new Error("extending is not supported yet.");
                 /*
                 if (extend === null) {
                     extend = el.val;
@@ -666,81 +856,124 @@ function createFunction(parts, startIndex, res, extend, callback) {
                 }
                 */
                 break;
-            case T_FINAL_STRING:
+            case N_TEXT:
                 res += "    _ += \"" + addSlashes(el.val).replace(/\n/g, "\\n") + "\";\n";
                 break;
-            case T_VARIABLE_JS_ESC:
+            case N_JS_EXPR_ESC:
                 x = el.val;
                 res += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
                 break;
-            case T_VARIABLE_JS:
+            case N_JS_EXPR:
                 x = el.val;
                 res += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : " + x + ";\n";
                 break;
-            case T_INJECTED_JS:
+            case N_JS_LINE:
                 res += "    " + el.val + "\n";
                 break;
-            case T_INCLUDE:
+            case N_INCLUDE:
                 if (!FastJadeC.isCompiled(el.val)) {
-                    FastJadeC.compile(el.val, function (b) {
-                        if (b) {
-                            // noinspection JSReferencingMutableVariableFromClosure
+                    if (FastJadeC.fileHasDefaultEnding(el.val)) {
+                        try {
+                            var b = FastJadeC.compile(el.val);
                             res += "    _ += (" + FastJadeC.getCompiled(el.val).toString() + ")(context);\n";
-                            // noinspection JSReferencingMutableVariableFromClosure
-                            createFunction(parts, i + 1, res, extend, callback);
-                        } else {
-                            // noinspection JSReferencingMutableVariableFromClosure
-                            createFunction(parts, i + 1, res, extend, callback);
+                        } catch (err) {
+                            if (err.code && err.code === "ENOENT") {
+                                showError(WARN_INCLUDE, "File \"" + el.val + "\" could not be included (ENOENT)",
+                                        null, err.path);
+                            } else {
+                                return b;
+                            }
                         }
-                    });
-                    return;
+                    } else {
+                        res += "    _ += \"" + addSlashes(FastJadeC.getFileContent(el.val)).replace(/\r?\n/g, "\\n") + "\\n\";\n";
+                    }
                 } else {
                     res += "    _ += (" + FastJadeC.getCompiled(el.val).toString() + ")(context);\n";
                 }
                 break;
             default:
-                callback(new Error("Invalid node type " + el.type));
-                return;
+                return new Error("Invalid node type " + el.type);
         }
     }
     if (extend !== null) {
         res += "    return (" + extend + ")(context);\n";
         res += "  }\n";
         res += "}";
-        callback(res);
     } else {
         res += "    return _;\n";
         res += "  }\n";
         res += "}";
-        callback(res);
     }
+    return res;
 }
-
 
 ////////////////////////////////     MODULE     ////////////////////////////////
 
+var WARN_COMPILE = 1,
+    WARN_INCLUDE = 2,
+    ERROR_PARSE = 3,
+    ERROR_INTERNAL = 4;
+
+var _label = null;
+
+function showError(type, warning, lineNumber, lineText) {
+    switch (type) {
+        case WARN_COMPILE:
+            lineNumber++;
+            if (_label === null) {
+                console.warn("Compiler warning: " + warning + "\nat line " + lineNumber + ":\n" + lineText);
+            } else {
+                console.warn("Compiler warning: " + warning + "\nat line " + lineNumber + " in " + _label + ":\n" + lineText);
+            }
+            break;
+        case WARN_INCLUDE:
+            if (_label === null) {
+                console.warn("Compiler warning: " + warning + ":\n" + lineText);
+            } else {
+                console.warn("Compiler warning: " + warning + " in " + _label + ":\n" + lineText);
+            }
+            break;
+        case ERROR_PARSE:
+            if (_label === null) {
+                console.warn("Parse error: " + warning);
+            } else {
+                console.warn("Parse error in " + _label + ": " + warning);
+            }
+            break;
+        case ERROR_INTERNAL:
+            console.warn("Internal error:\n" + warning);
+            break;
+        default:
+            console.warn(warning);
+    }
+}
+
 /**
  * @param {string} str
- * @param {function(function|Error)} callback
- * @return {null}
+ * @param {string?} label
+ * @return {function|Error}
  */
-function compile(str, callback) {
-    if (!str && str !== "") throw new Error("No string was given for compilation");
+function compile(str, label) {
+    if (!str && str !== "") {
+        showError(WARN_COMPILE, "No string given", 0, "");
+        throw new Error("[COMPILE] No string given");
+    }
+    
+    _label = label || null;
     
     var combinator = new PartsCombinator();
-    makeParts(_parse(str), combinator, false, true);
+    makeParts(_parse(str), combinator, true);
     var parts = combinator.getResult();
-    createFunction(parts, 0, false, null, function (string) {
-        try {
-            eval(string);
-            if (callback) {
-                // noinspection JSUnresolvedVariable
-                callback(anonymous);
-            }
-        } catch (e) {
-            if (callback) callback(new Error("Invalid javascript in Jade template (" + e + ")"));
-        }
-    });
+    var string = createFunction(parts, null);
+    try {
+        eval(string);
+        // noinspection JSUnresolvedVariable
+        return anonymous;
+    } catch (e) {
+        showError(ERROR_PARSE, "Invalid javascript:\n    " + e);
+        var labelStr = (_label === null) ? "" : " in " + _label;
+        return new Error("Parser warning: Invalid javascript" + labelStr);
+    }
 }
 
 /**
