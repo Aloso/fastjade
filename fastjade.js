@@ -50,10 +50,11 @@ var N_ROOT = 1,
     N_TEXT_WITH_INJECTIONS = 7,
     N_JS_LINE = 8,
     N_JS_EXPR = 9,
-    N_JS_EXPR_ESC = 10,
-    N_ARRAY = 11,
-    N_INCLUDE = 12,
-    N_EXTEND = 13;
+    N_JS_EXPR_NO_VALIDATE = 10,
+    N_JS_EXPR_ESC = 11,
+    N_ARRAY = 12,
+    N_INCLUDE = 13,
+    N_EXTEND = 14;
 
 function addSlashes(string) {
     return string.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
@@ -68,16 +69,14 @@ function escapeHtml(unsafe) {
             .replace(/'/g, "&#039;");
 }
 
-function objectToCssString(o) {
+function objectToString(type, o) {
     if (typeof o === "string") return o;
     var vals = [];
     for (var key in o) if (o.hasOwnProperty(key)) {
-        var keyTransformed = key.replace(/[A-Z]/g, function (match) {
-            return "-" + match.toLowerCase();
-        });
-        vals.push(keyTransformed + ":" + o[key]);
+        if (o[key] === true) vals.push(key + ":" + o[key]);
+        else if (o[key] !== false) vals.push(key + ":" + o[key]);
     }
-    return vals.join("; ");
+    return vals.join(type === "style" ? "; " : " ");
 }
 
 /**
@@ -115,9 +114,6 @@ var regexPool = {
     modifiers: /^(\.|!=|=)/,        // match . and != and =
     include: /^include\b/,          // match include
     
-    filter_js: /^:javascript/,      //:javascript
-    filter_js_plus_ws: /^:javascript\s*/,   //:javascript and additional whitespace
-    
     // match 1 or more node names and 0 or more IDs/classes
     html_node_with_selectors:     /^([a-z0-9_-]+)(([.#][a-z0-9\u00C0-\u024F_-]+)*)/i,
     // match 0 or more node names and 1 or more IDs/classes
@@ -125,6 +121,7 @@ var regexPool = {
     
     //            attr name                   =    "string escaped "|'string escaped '|variable
     html_attr: /^([a-z0-9\u00C0-\u024F_-]+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[a-z0-9\u00C0-\u024F_-]+)/i,
+    html_attr_no_val: /^[a-z0-9\u00C0-\u024F_-]+\b/,
     
     quoted_string: /^(".*?"|'.*?')/,
     quoted_string_esc: /^("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/,
@@ -180,7 +177,9 @@ function PartsCombinator() {
  *       isText: (boolean)?,
  *       items: (boolean)?,
  *       children: (Node[])?,
- *       lineNumber: (int)?
+ *       lineNumber: (int)?,
+ *       warningShown: (boolean)?,
+ *       noChildrenAllowed: (boolean)?
  * }} Node
  */
 
@@ -317,6 +316,13 @@ function _parse(string) {
         
         if (indent.parent.isText) {
             var pType = indent.parent.type;
+            if (indent.parent.noChildrenAllowed) {
+                if (!indent.parent.warningShown) {
+                    indent.parent.warningShown = true;
+                    showError(WARN_COMPILE, "No children allowed in this node", i, lines[i]);
+                }
+                continue;
+            }
             if (!indent.parent.indentWidth) {
                 indent.parent.indentWidth = indent.width;
             } else {
@@ -334,7 +340,8 @@ function _parse(string) {
             indentOrg.addNode(indent, true, {
                 type: N_TEXT_WITH_INJECTIONS,
                 text: trimmedLine,
-                children: []
+                isText: true,
+                noChildrenAllowed: true
             });
         } else if (trimmedLine[0] === "=") {
             // =
@@ -456,7 +463,9 @@ function _parse(string) {
             if (htmlNode.nodeName === null) {
                 indentOrg.addNode(indent, true, {
                     type: N_TEXT_WITH_INJECTIONS,
-                    text: htmlNode.after
+                    text: htmlNode.after,
+                    noChildrenAllowed: true,
+                    isText: true
                 });
             } else switch (htmlNode.mods) {
                 case null:
@@ -616,11 +625,13 @@ function parseHtmlAttribute(string) {
     if (trimmed === "") return null;
     if (trimmed[0] === ")") return {after: trimmed.substring(1)};
     
+    var key, value, len;
+    
     var attr = trimmed.match(regexPool.html_attr);
     if (attr !== null) {
-        var key = attr[1];
-        var value = attr[2];
-        var len = attr[0].length;
+        key = attr[1];
+        value = attr[2];
+        len = attr[0].length;
         if (value[0] === "\"" || value[0] === "'") {
             value = value.substring(1, value.length - 1);
             return {
@@ -628,25 +639,36 @@ function parseHtmlAttribute(string) {
                 after: string.substring(firstNWS + len)
             };
         } else {
+            // _ += (typeof a === 'undefined') ? '' : (a === true) ? "html" : (a === false) ? "" : "html=\"" + a + "\""
             return {
                 el: /** @type Node */ {
-                    type: N_ARRAY,
-                    items: [
-                        {type: N_TEXT, text: " " + key + "=\""},
-                        {type: N_JS_EXPR_ESC, text: value},
-                        {type: N_TEXT, text: "\""}
-                    ],
+                    type: N_JS_EXPR_NO_VALIDATE,
+                    text: "(typeof " + value + " === 'undefined') ? '' : " +
+                            "(" + value + " === true) ? ' " + key + "' : " +
+                            "(" + value + " === false) ? '' : " +
+                            "' " + key + "=\"' + escapeHtml(objectToString('" + key + "', " + value + ")) + '\"'",
                     children: []
                 },
                 after: string.substring(firstNWS + len)
             };
         }
     } else {
-        //TODO what about JSON?
-        
-        var e = new Error("Invalid html attribute");
-        e.isCustomWarning = true;
-        throw e;
+        attr = trimmed.match(regexPool.html_attr_no_val);
+    
+        if (attr !== null) {
+            key = attr[0];
+            value = key;
+            len = key.length;
+            return {
+                el: " " + key + "=\"" + value + "\"",
+                after: string.substring(firstNWS + len)
+            };
+        } else {
+            //TODO what about JSON?
+            var e = new Error("Invalid html attribute");
+            e.isCustomWarning = true;
+            throw e;
+        }
     }
 }
 
@@ -744,6 +766,7 @@ function makeParts(parsedTree, combinator, breakAllStrings) {
             return;
         case N_JS_EXPR:
         case N_JS_EXPR_ESC:
+        case N_JS_EXPR_NO_VALIDATE:
             combinator.add(content.text, content.type);
             for (i = 0; i < children.length; i++) {
                 makeParts(children[i], combinator);
@@ -862,6 +885,10 @@ function createFunction(parts, extend) {
             case N_JS_EXPR_ESC:
                 x = el.val;
                 res += "    _ += (typeof "+ x + " === 'undefined') ? 'undefined' : escapeHtml(" + x + ");\n";
+                break;
+            case N_JS_EXPR_NO_VALIDATE:
+                x = el.val;
+                res += "    _ += " + x + ";\n";
                 break;
             case N_JS_EXPR:
                 x = el.val;
@@ -990,5 +1017,5 @@ module.exports = {
     parse: parse,
     escapeHtml: escapeHtml,
     addSlashes: addSlashes,
-    objectToCssString: objectToCssString
+    objectToCssString: objectToString
 };
