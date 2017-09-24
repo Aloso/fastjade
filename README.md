@@ -117,28 +117,30 @@ Fastjade can run in the browser, too:
 
 ## Known issues
 
-  * `extends`, `block` and `mixin` are not supported yet, but I will add it very soon. Until then, use `include`.
+  * `extends`, `block` and `mixin` are not supported yet, but I will add it very soon. Until then, you can use `include`.
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work (yet), but can be realized with actual javascript
   * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
+  * Inline javascript expressions can't span multiple lines
+  * Inline javascript expressions are parsed incorrectly: e.g. `#{ "}" }` won't work as the wrong brace is matched
+  * Javascript expressions in HTML are not supported:
+    ```jade
+    //- doesn't work:
+    p(style = {color: "red", "background-color": "black"})
+    
+    //- works:
+    - var darkStyle = {color: "red", "background-color": "black"}
+    p(style = darkStyle)
+    ```
 
 
 ## Not supported yet
 
   * Proper indentation in the output (although this doesn't affect the html document in most cases)
-  * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
-  * Style attributes as JSON
-    ```jade
-    a(style={color: 'red', background: 'green'})
-    ```
+  * Most filters, like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
   * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
   * `&attributes`
   * Multi-line javascript
-  * When dealing with imperfect indentation, fastjade behaves differently than pug:
-    ```jade
-    div
-       p Hello
-      p World    <- in pug, this <p> is outside the <div>, but not in fastjade
-    ```
+  * When dealing with improper indentation, fastjade behaves differently than pug
 
 ## Bugs
 
