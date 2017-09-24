@@ -1,9 +1,9 @@
 # fastjade
-Jade is one of the slowest template engines for Node.js. My implementation **pre-compiles** jade templates and should be a lot faster. However, I haven't tested it yet.
+Pug (formerly called jade) is one of the slowest template engines for Node.js. My implementation **pre-compiles** jade templates and should be a lot faster. However, I haven't tested it yet.
 
 Fastjade has a <a href="http://aloso.bplaced.net/fastjade/">homepage</a> and a <a href="http://aloso.bplaced.net/fastjade/ide.html"><b>LIVE DEMO</b></a>!
 
-Here is a simple jade template:
+Here is a simple pug template:
 
 ```jade
 // Create variables
@@ -60,12 +60,12 @@ Executing it results in the following HTML document:
 
 ## Installation
 
-This project is not yet available on npm. However, you can install it by copying the files `fastjade.js` and `fastjadec.js` onto your server and including it in your file.
+This project is not yet available on npm. However, you can install it by copying the 3 files `fastjade.js`, `fastjadec.js` and `time.js` onto your server.
 
-Note that `fastjade.js` can only operate on *strings* while `fastjadec.js` offers an interface for template *files*.
+You only have to include *either* `fastjade.js` *or* `fastjadec.js`. `fastjade.js` can only compile strings, while `fastjadec.js` can compile files and whole directories, too.
 
 ```javascript
-var FastJade = require('./fastjadec.js'); // only fastjadec.js is required!
+var FastJade = require('./fastjadec.js');
 ```
 
 Then you can use it:
@@ -75,34 +75,31 @@ Then you can use it:
 FastJade.setHomeDirectory('my-templates');
 
 // Pre-compile all files in the templates directory:
-FastJade.compileDirectory('/');
+var stats = FastJade.compileDirectory('/', true);
+console.log("COMPILED " + stats.total + " FILES (" + stats.duration + "ms, " + stats.success + " successful, " + stats.failed + " failed)");
 
-// You can pass a callback to the function:
-// if the second parameter is true, the folder is searched recursively.
-// this is enabled by default.
-FastJade.compileDirectory('/', true, function (num, failed) {
-    console.log("COMPILED " + num + " FILES (" +
-            (num - failed) + " successful, " + failed + " failed)");
+// Alternatively, do it asynchronously (faster)
+FastJade.compileDirectoryAsync('/', true, function (stats) {
+    console.log("COMPILED " + stats.total + " FILES (" + stats.duration + "ms, " + stats.success + " successful, " + stats.failed + " failed)");
 });
 
-// Parse a pre-compiled file. The second argument is an object
-// with values that are usable in the template.
+// Parse a pre-compiled file. All properties of the second argument
+// can be accessed within the template:
 var html = FastJade.parse("index", {
   title: "Home"
 });
 
-// You can use it in Express.js:
+// Use it in Express.js:
 app.use('/help', function(req, res) {
   res.send(FastJade.parse("help", {
     title: "Help"
   }));
 });
-
 ```
 
 ## Browser version
 
-fastjade can run in the browser, too:
+Fastjade can run in the browser, too:
 
 ```html
 <!-- at the end of the body: -->
@@ -120,45 +117,27 @@ fastjade can run in the browser, too:
 
 ## Known issues
 
-  * `extends`, `block` and `mixin` are not supported yet, but I will add it very soon. `include` works partially -- `.jade` files can be included, but no other file types.
+  * `extends`, `block` and `mixin` are not supported yet, but I will add it very soon. Until then, use `include`.
   * Javascript-like constructs (`if/else`, `unless`, `each`, `case`) don't work (yet), but can be realized with actual javascript
   * In javascript lines, some local variables of the template engine can be accessed. As a result, `_` can't be used as variable name, otherwise the script crashes.
-  * Invisible comments (`//-`) can't have children - only the exact line is commented out.
 
 
 ## Not supported yet
 
   * Proper indentation in the output (although this doesn't affect the html document in most cases)
   * Filters like `:coffee-script`, `:babel`, `:uglify-js`, `:less`, and `:markdown-it`
-  * Style attributes as JSON are supported, but not inline:
+  * Style attributes as JSON
     ```jade
-    //- works:
-    - var styleAttributes = {color: 'red', background: 'green'}
-    a(style=styleAttributes)
-    
-    //- doesn't work in fastjade:
     a(style={color: 'red', background: 'green'})
     ```
   * Conditions in attributes: `a(class={active: currentUrl === '/'} href='/') Home`
   * `&attributes`
   * Multi-line javascript
-
-## Known incompatibilities with jade
-
-  * Unlike jade, fastjade converts CSS attributes: `{backgroundColor: "red"}` becomes `"background-color:red"`. In Jade, you would have to write `{"background-color": "red"}`
-  * When passing an object to an html attribute, it is automatically treated as CSS:
-    ```jade
-    - var attrs = {isActive: title === "Hello World"}
-    p(style=attrs)
-    ```
-    ```html
-    <p style="is-active:true"></p>
-    ```
-  * When dealing with imperfect indentation, fastjade behaves more logical than jade:
+  * When dealing with imperfect indentation, fastjade behaves differently than pug:
     ```jade
     div
        p Hello
-      p World    <- in jade, this <p> is outside the <div>
+      p World    <- in pug, this <p> is outside the <div>, but not in fastjade
     ```
 
 ## Bugs
