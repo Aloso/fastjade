@@ -121,7 +121,7 @@ var regexPool = {
     
     //            attr name                   =    "string escaped "|'string escaped '|variable
     html_attr: /^([a-z0-9\u00C0-\u024F_-]+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[a-z0-9\u00C0-\u024F_-]+)/i,
-    html_attr_no_val: /^[a-z0-9\u00C0-\u024F_-]+\b/,
+    html_attr_no_val: /^[a-z0-9\u00C0-\u024F_-]+\b/i,
     
     quoted_string: /^(".*?"|'.*?')/,
     quoted_string_esc: /^("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/,
